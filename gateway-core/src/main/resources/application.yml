@@ -1,16 +1,18 @@
 server:
-  port: 8080
+  port: 8885
 
 spring:
   application:
     name: lh-agent-gateway
+  autoconfigure:
+    exclude: org.springframework.boot.autoconfigure.amqp.RabbitAutoConfiguration
   cloud:
     gateway:
       enabled: true
   data:
     redis:
       host: ${REDIS_HOST:localhost}
-      port: ${REDIS_PORT:6379}
+      port: ${REDIS_PORT:16379}
       timeout: 3000ms
       lettuce:
         pool:
