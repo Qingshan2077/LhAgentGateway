@@ -5,6 +5,7 @@
 target/
 !.mvn/wrapper/maven-wrapper.jar
 
+out/
 # IDE
 .idea/
 *.iml

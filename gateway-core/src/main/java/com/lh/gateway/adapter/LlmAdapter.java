@@ -9,9 +9,15 @@ import reactor.core.publisher.Mono;
  */
 public interface LlmAdapter {
 
-    /** 供应商 */
+    /** 供应商唯一标识 */
     String providerName();
 
     /** 调用 LLM（非流式） */
     Mono<LlmResponse> call(LlmRequest request);
+
+    /** 调用 LLM（流式） */
+    Mono<String> callStream(LlmRequest request);
+
+    /** 健康检查 */
+    Mono<Boolean> healthCheck();
 }
