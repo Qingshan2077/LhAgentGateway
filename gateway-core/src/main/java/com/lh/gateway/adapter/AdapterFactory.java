@@ -32,7 +32,7 @@ public class AdapterFactory {
                 webClientBuilder.baseUrl("https://api.deepseek.com").build()));
         register(new ClaudeAdapter(
                 webClientBuilder.baseUrl("https://api.anthropic.com").build()));
-        log.info("Registered default LLM adapters: openai, deepseek, claude");
+        log.info("已注册好的LLM适配: openai, deepseek, claude");
     }
 
     public void register(LlmAdapter adapter) {
