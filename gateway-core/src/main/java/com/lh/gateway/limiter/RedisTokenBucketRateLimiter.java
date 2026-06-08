@@ -3,6 +3,7 @@ package com.lh.gateway.limiter;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.core.io.ClassPathResource;
 import org.springframework.data.redis.core.ReactiveRedisTemplate;
 import org.springframework.data.redis.core.script.DefaultRedisScript;
@@ -20,7 +21,8 @@ public class RedisTokenBucketRateLimiter implements RateLimiter {
     private final ReactiveRedisTemplate<String, String> redisTemplate;
     private RedisScript<Long> rateLimitScript;
 
-    public RedisTokenBucketRateLimiter(ReactiveRedisTemplate<String, String> redisTemplate) {
+    public RedisTokenBucketRateLimiter(
+            @Qualifier("reactiveRedisTemplate") ReactiveRedisTemplate<String, String> redisTemplate) {
         this.redisTemplate = redisTemplate;
     }
 
@@ -46,13 +48,13 @@ public class RedisTokenBucketRateLimiter implements RateLimiter {
         return redisTemplate.execute(
                         rateLimitScript,
                         List.of(bucketKey),
-                        String.valueOf(capacity),
-                        String.valueOf(rate),
-                        String.valueOf(now),
-                        String.valueOf(cost)
-                )
+                        List.of(String.valueOf(capacity), String.valueOf(rate),
+                                String.valueOf(now), String.valueOf(cost))
+                ).next()
                 .map(result -> {
-                    if (result == 1L) return RateLimitResult.ALLOWED;
+                    if (result != null && result == 1L) {
+                        return RateLimitResult.ALLOWED;
+                    }
                     long retryAfterMs = (cost * 1000L) / Math.max(rate, 1);
                     return RateLimitResult.denied(retryAfterMs);
                 })
