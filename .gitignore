@@ -24,3 +24,8 @@ logs/
 
 # Env
 .env
+
+
+*.md
+!README.md
+

@@ -7,9 +7,17 @@ import java.util.List;
 
 /**
  * 路由策略接口
+ * <p>
+ * 从可用 Provider 列表中选出一个处理当前请求。
+ * 实现策略：加权轮询、最小延迟、一致性哈希。
+ * </p>
  */
 public interface RouterStrategy {
 
-    /** 从可用 Provider 列表中选择一个 */
+    /**
+     * @param providers 当前可用 Provider 列表
+     * @param model     请求的目标模型名
+     * @return 选中的 Provider 名称
+     */
     Mono<String> select(List<ProviderConfig> providers, String model);
 }

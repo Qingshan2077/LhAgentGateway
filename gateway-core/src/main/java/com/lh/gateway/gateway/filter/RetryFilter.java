@@ -1,8 +1,7 @@
 package com.lh.gateway.gateway.filter;
 
 import com.lh.gateway.retry.RetryStrategy;
-import org.slf4j.Logger;
-import org.slf4j.LoggerFactory;
+import lombok.extern.slf4j.Slf4j;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
 import org.springframework.core.Ordered;
@@ -11,40 +10,55 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
-import java.time.Duration;
 import java.util.concurrent.atomic.AtomicInteger;
 
+/**
+ * 重试过滤器
+ *
+ * <p>对可重试错误（429/5xx/超时）自动重试，采用指数退避策略。
+ * 重试超出阈值后，返回上游处理。</p>
+ */
+@Slf4j
 @Component
 public class RetryFilter implements GlobalFilter, Ordered {
 
-    private static final Logger log = LoggerFactory.getLogger(RetryFilter.class);
-    private final RetryStrategy strategy = RetryStrategy.defaultStrategy();
+    private final RetryStrategy retryStrategy = RetryStrategy.defaultStrategy();
 
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
         AtomicInteger attempt = new AtomicInteger(0);
+
         return attemptRequest(exchange, chain, attempt);
     }
 
     private Mono<Void> attemptRequest(ServerWebExchange exchange, GatewayFilterChain chain,
                                        AtomicInteger attempt) {
-        int current = attempt.incrementAndGet();
-        return chain.filter(exchange).then(Mono.defer(() -> {
-            HttpStatus status = HttpStatus.resolve(
-                    exchange.getResponse().getStatusCode() != null ?
-                            exchange.getResponse().getStatusCode().value() : 0);
-            if (status != null && isRetryable(status) && current <= strategy.getMaxAttempts()) {
-                long delay = strategy.computeBackoff(current);
-                log.warn("Retry {}/{} after {}ms", current, strategy.getMaxAttempts(), delay);
-                return Mono.delay(Duration.ofMillis(delay))
-                        .then(attemptRequest(exchange, chain, attempt));
-            }
-            return Mono.empty();
-        }));
+        int currentAttempt = attempt.incrementAndGet();
+
+        return chain.filter(exchange)
+                .then(Mono.defer(() -> {
+                    // 检查响应状态码
+                    HttpStatus status = HttpStatus.resolve(
+                            exchange.getResponse().getStatusCode() != null ?
+                                    exchange.getResponse().getStatusCode().value() : 0);
+
+                    if (status != null && isRetryable(status) && currentAttempt <= retryStrategy.maxAttempts()) {
+                        long delay = retryStrategy.computeBackoff(currentAttempt);
+                        log.warn("Retry attempt {}/{} after {}ms, status={}",
+                                currentAttempt, retryStrategy.maxAttempts(), delay, status);
+
+                        return Mono.delay(java.time.Duration.ofMillis(delay))
+                                .then(attemptRequest(exchange, chain, attempt));
+                    }
+
+                    return Mono.empty();
+                }));
     }
 
     private boolean isRetryable(HttpStatus status) {
-        return status == HttpStatus.TOO_MANY_REQUESTS || status.is5xxServerError();
+        if (status == null) return false;
+        return status == HttpStatus.TOO_MANY_REQUESTS
+                || status.is5xxServerError();
     }
 
     @Override
