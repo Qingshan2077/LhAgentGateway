@@ -28,3 +28,11 @@ spring:
 logging:
   level:
     com.lh.gateway: DEBUG
+
+llm:
+  upstream:
+    uri: ${LLM_UPSTREAM_URI:https://api.openai.com}
+  cache:
+    # 缓存总开关：A/B 压测时用 --llm.cache.enabled=false 关闭缓存跑基线
+    enabled: ${LLM_CACHE_ENABLED:true}
+    ttl-seconds: 300
