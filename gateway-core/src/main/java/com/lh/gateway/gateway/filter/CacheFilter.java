@@ -6,6 +6,7 @@ import com.lh.gateway.cache.MultiLevelCacheManager;
 import com.lh.gateway.circuitbreaker.CircuitBreakerFactory;
 import com.lh.gateway.model.LlmRequest;
 import com.lh.gateway.model.LlmResponse;
+import com.lh.gateway.monitor.CustomMetrics;
 import lombok.extern.slf4j.Slf4j;
 import org.reactivestreams.Publisher;
 import org.springframework.beans.factory.annotation.Value;
@@ -54,6 +55,7 @@ public class CacheFilter implements GlobalFilter, Ordered {
     private final MultiLevelCacheManager cacheManager;
     private final CacheKeyGenerator keyGenerator;
     private final CircuitBreakerFactory breakerFactory;
+    private final CustomMetrics customMetrics;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Value("${llm.cache.enabled:true}")
@@ -64,10 +66,12 @@ public class CacheFilter implements GlobalFilter, Ordered {
 
     public CacheFilter(MultiLevelCacheManager cacheManager,
                        CacheKeyGenerator keyGenerator,
-                       CircuitBreakerFactory breakerFactory) {
+                       CircuitBreakerFactory breakerFactory,
+                       CustomMetrics customMetrics) {
         this.cacheManager = cacheManager;
         this.keyGenerator = keyGenerator;
         this.breakerFactory = breakerFactory;
+        this.customMetrics = customMetrics;
     }
 
     @Override
@@ -101,10 +105,12 @@ public class CacheFilter implements GlobalFilter, Ordered {
                     return cacheManager.get(cacheKey)
                             .flatMap(cachedResponse -> {
                                 log.debug("Cache HIT: key={}", cacheKey);
+                                customMetrics.recordCacheHit(headerProvider(exchange));
                                 return writeCachedResponse(exchange, cachedResponse);
                             })
                             .switchIfEmpty(Mono.defer(() -> {
                                 log.debug("Cache MISS: key={}", cacheKey);
+                                customMetrics.recordCacheMiss(headerProvider(exchange));
                                 return forwardAndCache(exchange, chain, bytes, cacheKey);
                             }));
                 });
@@ -154,7 +160,13 @@ public class CacheFilter implements GlobalFilter, Ordered {
         if (selected != null) {
             return selected;
         }
-        return exchange.getRequest().getHeaders().getFirst("X-Provider");
+        return headerProvider(exchange);
+    }
+
+    /** 命中/未命中统计用：缓存阶段尚未路由，取 X-Provider 头（无头记 unknown） */
+    private String headerProvider(ServerWebExchange exchange) {
+        String provider = exchange.getRequest().getHeaders().getFirst("X-Provider");
+        return provider != null ? provider : "unknown";
     }
 
     /** 异步写缓存：解析响应体 → 写入 Redis + 布隆 + 本地缓存 */

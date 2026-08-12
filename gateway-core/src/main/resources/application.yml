@@ -36,6 +36,15 @@ logging:
   level:
     com.lh.gateway: DEBUG
 
+management:
+  endpoints:
+    web:
+      exposure:
+        include: health,prometheus,info
+  metrics:
+    tags:
+      application: lh-agent-gateway
+
 # Resilience4j 熔断配置（降级调用路径的备选 Provider 保护）
 resilience4j:
   circuitbreaker:

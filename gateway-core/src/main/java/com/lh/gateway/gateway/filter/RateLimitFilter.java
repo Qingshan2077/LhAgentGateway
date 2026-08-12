@@ -2,6 +2,7 @@ package com.lh.gateway.gateway.filter;
 
 import com.lh.gateway.limiter.RateLimiter;
 import com.lh.gateway.limiter.RateLimitResult;
+import com.lh.gateway.monitor.CustomMetrics;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
@@ -28,6 +29,7 @@ import reactor.core.publisher.Mono;
 public class RateLimitFilter implements GlobalFilter, Ordered {
 
     private final RateLimiter rateLimiter;
+    private final CustomMetrics customMetrics;
 
     /** 全局限流（默认 500 容量, 100/s 速率） */
     @Value("${llm.rate-limit.global-capacity:500}")
@@ -47,8 +49,9 @@ public class RateLimitFilter implements GlobalFilter, Ordered {
     @Value("${llm.rate-limit.provider-rate:50}")
     private int providerRate;
 
-    public RateLimitFilter(RateLimiter rateLimiter) {
+    public RateLimitFilter(RateLimiter rateLimiter, CustomMetrics customMetrics) {
         this.rateLimiter = rateLimiter;
+        this.customMetrics = customMetrics;
     }
 
     @Override
@@ -104,6 +107,7 @@ public class RateLimitFilter implements GlobalFilter, Ordered {
         exchange.getResponse().getHeaders().add("Retry-After",
                 String.valueOf(result.getRetryAfterMs() / 1000));
         exchange.getAttributes().put("rateLimitLevel", level);
+        customMetrics.recordRateLimit(level);
         return exchange.getResponse().setComplete();
     }
 

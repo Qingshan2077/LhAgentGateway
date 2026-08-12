@@ -29,6 +29,9 @@ public class CustomMetrics {
     private final Map<String, Counter> rateLimitCounters = new ConcurrentHashMap<>();
     /** 延迟计时器：tags = {provider} */
     private final Map<String, Timer> latencyTimers = new ConcurrentHashMap<>();
+    /** 缓存命中/未命中计数器：tags = {provider} */
+    private final Map<String, Counter> cacheHitCounters = new ConcurrentHashMap<>();
+    private final Map<String, Counter> cacheMissCounters = new ConcurrentHashMap<>();
 
     public CustomMetrics(MeterRegistry meterRegistry) {
         this.meterRegistry = meterRegistry;
@@ -77,6 +80,30 @@ public class CustomMetrics {
                         .description("Request latency by provider")
                         .register(meterRegistry)
         ).record(latencyMs, TimeUnit.MILLISECONDS);
+    }
+
+    /**
+     * 记录缓存命中（Counter 类型，用于计算命中率）
+     */
+    public void recordCacheHit(String provider) {
+        cacheHitCounters.computeIfAbsent(provider, k ->
+                Counter.builder("agent_gateway_cache_hits_total")
+                        .tag("provider", provider)
+                        .description("Total cache hits")
+                        .register(meterRegistry)
+        ).increment();
+    }
+
+    /**
+     * 记录缓存未命中（Counter 类型，用于计算命中率）
+     */
+    public void recordCacheMiss(String provider) {
+        cacheMissCounters.computeIfAbsent(provider, k ->
+                Counter.builder("agent_gateway_cache_misses_total")
+                        .tag("provider", provider)
+                        .description("Total cache misses")
+                        .register(meterRegistry)
+        ).increment();
     }
 
     /**

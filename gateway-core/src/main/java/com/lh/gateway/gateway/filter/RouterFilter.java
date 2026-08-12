@@ -9,6 +9,7 @@ import com.lh.gateway.model.CallLog;
 import com.lh.gateway.model.LlmRequest;
 import com.lh.gateway.model.LlmResponse;
 import com.lh.gateway.model.ProviderConfig;
+import com.lh.gateway.monitor.CustomMetrics;
 import com.lh.gateway.mq.LogProducer;
 import com.lh.gateway.router.LeastLatencyRouter;
 import com.lh.gateway.router.RouterFactory;
@@ -57,6 +58,7 @@ public class RouterFilter implements GlobalFilter, Ordered {
     private final FallbackHandler fallbackHandler;
     private final LeastLatencyRouter leastLatencyRouter;
     private final LogProducer logProducer;
+    private final CustomMetrics customMetrics;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public RouterFilter(LlmProperties llmProperties,
@@ -64,13 +66,15 @@ public class RouterFilter implements GlobalFilter, Ordered {
                         CircuitBreakerFactory breakerFactory,
                         FallbackHandler fallbackHandler,
                         LeastLatencyRouter leastLatencyRouter,
-                        LogProducer logProducer) {
+                        LogProducer logProducer,
+                        CustomMetrics customMetrics) {
         this.llmProperties = llmProperties;
         this.routerFactory = routerFactory;
         this.breakerFactory = breakerFactory;
         this.fallbackHandler = fallbackHandler;
         this.leastLatencyRouter = leastLatencyRouter;
         this.logProducer = logProducer;
+        this.customMetrics = customMetrics;
     }
 
     @Override
@@ -123,15 +127,34 @@ public class RouterFilter implements GlobalFilter, Ordered {
         exchange.getAttributes().put(ServerWebExchangeUtils.GATEWAY_REQUEST_URL_ATTR, targetUri);
         log.debug("Route selected: provider={}, target={}", provider, targetUri);
 
-        // 转发，完成后记录延迟（供最小延迟策略统计）+ 构建调用日志发 MQ
+        // 转发，完成后记录延迟（供最小延迟策略统计）+ 监控指标 + 调用日志发 MQ
         long start = System.nanoTime();
         return chain.filter(exchange)
                 .doOnSuccess(v -> {
                     long latencyMs = (System.nanoTime() - start) / 1_000_000;
                     leastLatencyRouter.recordLatency(provider, latencyMs);
+                    recordMetrics(exchange, provider, request, latencyMs);
                     sendCallLog(exchange, provider, latencyMs);
                     log.debug("Route latency: provider={}, {}ms", provider, latencyMs);
                 });
+    }
+
+    /** 埋点：请求计数 + 延迟 + token 消耗 */
+    private void recordMetrics(ServerWebExchange exchange, String provider,
+                               LlmRequest request, long latencyMs) {
+        try {
+            HttpStatus status = resolveStatus(exchange);
+            String statusName = status != null ? status.name() : "unknown";
+            customMetrics.recordRequest(provider,
+                    request != null ? request.getModel() : "unknown", statusName);
+            customMetrics.recordLatency(provider, latencyMs);
+            Integer totalTokens = exchange.getAttribute("llmTotalTokens");
+            if (totalTokens != null && totalTokens > 0) {
+                customMetrics.recordTokenUsage(provider, totalTokens);
+            }
+        } catch (Exception e) {
+            log.warn("Failed to record metrics: {}", e.getMessage());
+        }
     }
 
     /** 构建调用日志（fire-and-forget 发 MQ，失败不影响主流程） */
