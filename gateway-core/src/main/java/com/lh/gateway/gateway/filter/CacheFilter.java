@@ -3,6 +3,9 @@ package com.lh.gateway.gateway.filter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lh.gateway.cache.CacheKeyGenerator;
 import com.lh.gateway.cache.MultiLevelCacheManager;
+import com.lh.gateway.circuitbreaker.CircuitBreakerFactory;
+import com.lh.gateway.circuitbreaker.FallbackHandler;
+import com.lh.gateway.circuitbreaker.ProviderCircuitBreaker;
 import com.lh.gateway.model.LlmRequest;
 import com.lh.gateway.model.LlmResponse;
 import lombok.extern.slf4j.Slf4j;
@@ -32,13 +35,17 @@ import java.util.List;
  * <p>流程：读请求体 → 生成缓存 Key → 查缓存（布隆 → 本地 Caffeine → Redis），
  * 命中直接返回；未命中转发上游，并在响应完成后把结果写回缓存（写 Redis + 布隆 + 本地）。</p>
  *
+ * <p>同时承担熔断降级：转发前检查 Provider 熔断状态，熔断时调用 {@link FallbackHandler}
+ * 切换到备选 Provider（或返回降级响应）；转发完成后把调用结果回喂熔断器
+ * （{@link ProviderCircuitBreaker#recordResult}），驱动滑动窗口错误率统计。</p>
+ *
  * <p>只缓存非流式请求（stream=false）的 2xx 响应。缓存命中响应带 {@code X-Cache: HIT} 头，
- * 便于压测/调试统计命中率。</p>
+ * 熔断降级响应带 {@code X-Circuit-Breaker: OPEN} 头。</p>
  *
  * <p>配置：{@code llm.cache.enabled}（默认 true，A/B 压测可关闭）、
  * {@code llm.cache.ttl-seconds}（默认 300）。</p>
  *
- * <p>order = +50，位于 RetryFilter(+40) 之后、上游转发（NettyRoutingFilter）之前。</p>
+ * <p>order = +50，位于 RetryFilter(+40) 之后、路由选择与上游转发之前。</p>
  */
 @Slf4j
 @Component
@@ -48,6 +55,8 @@ public class CacheFilter implements GlobalFilter, Ordered {
 
     private final MultiLevelCacheManager cacheManager;
     private final CacheKeyGenerator keyGenerator;
+    private final CircuitBreakerFactory breakerFactory;
+    private final FallbackHandler fallbackHandler;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Value("${llm.cache.enabled:true}")
@@ -56,9 +65,14 @@ public class CacheFilter implements GlobalFilter, Ordered {
     @Value("${llm.cache.ttl-seconds:300}")
     private long cacheTtlSeconds;
 
-    public CacheFilter(MultiLevelCacheManager cacheManager, CacheKeyGenerator keyGenerator) {
+    public CacheFilter(MultiLevelCacheManager cacheManager,
+                       CacheKeyGenerator keyGenerator,
+                       CircuitBreakerFactory breakerFactory,
+                       FallbackHandler fallbackHandler) {
         this.cacheManager = cacheManager;
         this.keyGenerator = keyGenerator;
+        this.breakerFactory = breakerFactory;
+        this.fallbackHandler = fallbackHandler;
     }
 
     @Override
@@ -86,6 +100,8 @@ public class CacheFilter implements GlobalFilter, Ordered {
 
                     String cacheKey = keyGenerator.generateKey(request);
                     exchange.getAttributes().put(CACHE_KEY_ATTR, cacheKey);
+                    // 供后续过滤器（路由选择/熔断降级/日志）使用
+                    exchange.getAttributes().put("llmRequest", request);
 
                     return cacheManager.get(cacheKey)
                             .flatMap(cachedResponse -> {
@@ -94,17 +110,37 @@ public class CacheFilter implements GlobalFilter, Ordered {
                             })
                             .switchIfEmpty(Mono.defer(() -> {
                                 log.debug("Cache MISS: key={}", cacheKey);
-                                return forwardAndCache(exchange, chain, bytes, cacheKey);
+                                return forwardWithCircuitBreaker(exchange, chain, bytes, cacheKey, request);
                             }));
                 });
     }
 
     /**
-     * 转发上游，并用响应装饰器截获响应体，2xx 时异步写缓存。
+     * 熔断检查后转发：Provider 熔断（OPEN）时切换到备选 Provider 或返回降级响应；
+     * 正常则转发上游，并在响应完成后回喂熔断器结果 + 异步写缓存。
+     */
+    private Mono<Void> forwardWithCircuitBreaker(ServerWebExchange exchange, GatewayFilterChain chain,
+                                                 byte[] requestBody, String cacheKey, LlmRequest request) {
+        String provider = exchange.getRequest().getHeaders().getFirst("X-Provider");
+        ProviderCircuitBreaker breaker = provider != null ? breakerFactory.getBreaker(provider) : null;
+
+        if (breaker != null && !breaker.isCallAllowed()) {
+            log.warn("Circuit breaker OPEN for provider: {}, switching to fallback", provider);
+            return fallbackHandler.fallback(provider, request)
+                    .flatMap(response -> writeFallbackResponse(exchange, response));
+        }
+
+        return forwardAndCache(exchange, chain, requestBody, cacheKey, provider, breaker);
+    }
+
+    /**
+     * 转发上游，并用响应装饰器截获响应体：
+     * 2xx 时异步写缓存；调用结果回喂熔断器（驱动滑动窗口错误率统计）。
      * 缓存写失败不影响主响应（异步订阅 + 仅告警日志）。
      */
     private Mono<Void> forwardAndCache(ServerWebExchange exchange, GatewayFilterChain chain,
-                                       byte[] requestBody, String cacheKey) {
+                                       byte[] requestBody, String cacheKey,
+                                       String provider, ProviderCircuitBreaker breaker) {
         ServerHttpResponseDecorator decorator = new ServerHttpResponseDecorator(exchange.getResponse()) {
             @Override
             public Mono<Void> writeWith(Publisher<? extends DataBuffer> body) {
@@ -112,10 +148,17 @@ public class CacheFilter implements GlobalFilter, Ordered {
                     Flux<DataBuffer> flux = Flux.from(body);
                     return super.writeWith(flux.collectList().flatMap(dataBuffers -> {
                         byte[] responseBytes = mergeBuffers(dataBuffers);
-                        if (getStatusCode() != null && getStatusCode().is2xxSuccessful()) {
-                            cacheResponseAsync(cacheKey, responseBytes);
-                        } else {
-                            log.debug("Skip caching, status={}", getStatusCode());
+                        if (getStatusCode() != null) {
+                            boolean success = getStatusCode().is2xxSuccessful();
+                            if (breaker != null) {
+                                breaker.recordResult(success);
+                                log.debug("Record result for provider={}, success={}", provider, success);
+                            }
+                            if (success) {
+                                cacheResponseAsync(cacheKey, responseBytes);
+                            } else {
+                                log.debug("Skip caching, status={}", getStatusCode());
+                            }
                         }
                         return Mono.just(getDelegate().bufferFactory().wrap(responseBytes));
                     }));
@@ -170,12 +213,24 @@ public class CacheFilter implements GlobalFilter, Ordered {
         ServerHttpResponse httpResponse = exchange.getResponse();
         httpResponse.getHeaders().setContentType(MediaType.APPLICATION_JSON);
         httpResponse.getHeaders().add("X-Cache", "HIT");
+        return writeJsonResponse(exchange, httpResponse, response);
+    }
 
+    /** 熔断降级响应：带 X-Circuit-Breaker: OPEN 标记 */
+    private Mono<Void> writeFallbackResponse(ServerWebExchange exchange, LlmResponse response) {
+        ServerHttpResponse httpResponse = exchange.getResponse();
+        httpResponse.getHeaders().setContentType(MediaType.APPLICATION_JSON);
+        httpResponse.getHeaders().add("X-Circuit-Breaker", "OPEN");
+        return writeJsonResponse(exchange, httpResponse, response);
+    }
+
+    private Mono<Void> writeJsonResponse(ServerWebExchange exchange, ServerHttpResponse httpResponse,
+                                         LlmResponse response) {
         byte[] body;
         try {
             body = objectMapper.writeValueAsBytes(response);
         } catch (Exception e) {
-            log.error("Serialize cached response failed", e);
+            log.error("Serialize response failed", e);
             httpResponse.setStatusCode(HttpStatus.INTERNAL_SERVER_ERROR);
             return httpResponse.setComplete();
         }

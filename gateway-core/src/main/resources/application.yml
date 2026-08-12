@@ -29,9 +29,27 @@ logging:
   level:
     com.lh.gateway: DEBUG
 
+# Resilience4j 熔断配置（降级调用路径的备选 Provider 保护）
+resilience4j:
+  circuitbreaker:
+    configs:
+      default:
+        sliding-window-size: 10
+        failure-rate-threshold: 50
+        wait-duration-in-open-state: 30s
+        permitted-number-of-calls-in-half-open-state: 3
+
 llm:
   upstream:
     uri: ${LLM_UPSTREAM_URI:https://api.openai.com}
+  adapter:
+    # 供应商 base-url（熔断降级/健康检查路径用；压测验证备选切换时指向本地 Mock）
+    openai:
+      base-url: ${LLM_ADAPTER_OPENAI_BASE_URL:https://api.openai.com}
+    deepseek:
+      base-url: ${LLM_ADAPTER_DEEPSEEK_BASE_URL:https://api.deepseek.com}
+    claude:
+      base-url: ${LLM_ADAPTER_CLAUDE_BASE_URL:https://api.anthropic.com}
   rate-limit:
     # 全局层（保护网关整体与预算）
     global-capacity: 500
@@ -46,11 +64,3 @@ llm:
     # 缓存总开关：A/B 压测时用 --llm.cache.enabled=false 关闭缓存跑基线
     enabled: ${LLM_CACHE_ENABLED:true}
     ttl-seconds: 300
-  rate-limit:
-    # 三层令牌桶参数（全局 / AppKey / Provider），压测时用 --llm.rate-limit.global-rate=5000 放开
-    global-capacity: 500
-    global-rate: 100
-    app-key-capacity: 100
-    app-key-rate: 20
-    provider-capacity: 200
-    provider-rate: 50
