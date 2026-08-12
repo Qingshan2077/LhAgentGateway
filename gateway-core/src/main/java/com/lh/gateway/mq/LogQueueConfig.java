@@ -1,6 +1,7 @@
 package com.lh.gateway.mq;
 
 import org.springframework.amqp.core.*;
+import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -33,14 +34,14 @@ public class LogQueueConfig {
     }
 
     @Bean
-    public Binding callLogBinding(TopicExchange exchange, Queue callLogQueue) {
+    public Binding callLogBinding(TopicExchange exchange, @Qualifier("callLogQueue") Queue callLogQueue) {
         return BindingBuilder.bind(callLogQueue)
                 .to(exchange)
                 .with(QueueNames.ROUTING_KEY_LOG + "*");
     }
 
     @Bean
-    public Binding callLogDlqBinding(TopicExchange exchange, Queue callLogDlq) {
+    public Binding callLogDlqBinding(TopicExchange exchange, @Qualifier("callLogDlq") Queue callLogDlq) {
         return BindingBuilder.bind(callLogDlq)
                 .to(exchange)
                 .with(QueueNames.LLM_CALL_LOG_DLQ);

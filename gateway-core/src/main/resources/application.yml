@@ -2,6 +2,11 @@ server:
   port: 8885
 
 spring:
+  rabbitmq:
+    host: localhost
+    port: 5730
+    username: guest
+    password: guest
   application:
     name: lh-agent-gateway
   autoconfigure:
@@ -12,7 +17,7 @@ spring:
   data:
     redis:
       host: ${REDIS_HOST:localhost}
-      port: ${REDIS_PORT:16379}
+      port: ${REDIS_PORT:6379}
       timeout: 3000ms
       lettuce:
         pool:

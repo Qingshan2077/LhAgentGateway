@@ -41,7 +41,7 @@ public class RateLimitFilter implements GlobalFilter, Ordered {
         // 1. 全局限流
         return rateLimiter.tryAcquire("global", GLOBAL_CAPACITY, GLOBAL_RATE, 1)
                 .flatMap(result -> {
-                    if (!result.allowed()) {
+                    if (!result.isAllowed()) {
                         log.warn("Global rate limit exceeded");
                         return denyRequest(exchange, result);
                     }
@@ -49,7 +49,7 @@ public class RateLimitFilter implements GlobalFilter, Ordered {
                     if (appKey != null) {
                         return rateLimiter.tryAcquire("app:" + appKey, APP_KEY_CAPACITY, APP_KEY_RATE, 1)
                                 .flatMap(appResult -> {
-                                    if (!appResult.allowed()) {
+                                    if (!appResult.isAllowed()) {
                                         log.warn("AppKey rate limit exceeded: {}", appKey);
                                         return denyRequest(exchange, appResult);
                                     }
@@ -63,7 +63,7 @@ public class RateLimitFilter implements GlobalFilter, Ordered {
     private Mono<Void> denyRequest(ServerWebExchange exchange, RateLimitResult result) {
         exchange.getResponse().setStatusCode(HttpStatus.TOO_MANY_REQUESTS);
         exchange.getResponse().getHeaders().add("Retry-After",
-                String.valueOf(result.retryAfterMs() / 1000));
+                String.valueOf(result.getRetryAfterMs() / 1000));
         return exchange.getResponse().setComplete();
     }
 

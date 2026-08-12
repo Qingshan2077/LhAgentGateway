@@ -6,7 +6,7 @@ import org.springframework.stereotype.Component;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 
-@Component
+@Component("llmCacheKeyGenerator")
 public class CacheKeyGenerator {
 
     private static final String PREFIX = "llm:";

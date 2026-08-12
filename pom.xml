@@ -24,6 +24,8 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <spring-boot.version>3.2.5</spring-boot.version>
         <spring-cloud.version>2023.0.1</spring-cloud.version>
+        <lombok.version>1.18.32</lombok.version>
+        <micrometer.version>1.12.5</micrometer.version>
         <mybatis-plus.version>3.5.6</mybatis-plus.version>
         <resilience4j.version>2.2.0</resilience4j.version>
     </properties>

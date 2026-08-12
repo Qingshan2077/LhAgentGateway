@@ -1,9 +1,11 @@
-package com.lh.gateway.mq;
+package com.lh.gateway.config;
 
 import org.springframework.amqp.rabbit.config.SimpleRabbitListenerContainerFactory;
+import org.springframework.amqp.rabbit.connection.CachingConnectionFactory;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
 import org.springframework.amqp.rabbit.core.RabbitTemplate;
 import org.springframework.amqp.support.converter.Jackson2JsonMessageConverter;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.context.annotation.Bean;
 import org.springframework.context.annotation.Configuration;
 
@@ -12,6 +14,20 @@ import org.springframework.context.annotation.Configuration;
  */
 @Configuration
 public class RabbitConfig {
+
+    @Bean
+    public ConnectionFactory connectionFactory(
+            @Value("${spring.rabbitmq.host:${RABBITMQ_HOST:localhost}}") String host,
+            @Value("${spring.rabbitmq.port:${RABBITMQ_PORT:5672}}") int port,
+            @Value("${spring.rabbitmq.username:${RABBITMQ_USERNAME:guest}}") String username,
+            @Value("${spring.rabbitmq.password:${RABBITMQ_PASSWORD:guest}}") String password) {
+        CachingConnectionFactory factory = new CachingConnectionFactory();
+        factory.setHost(host);
+        factory.setPort(port);
+        factory.setUsername(username);
+        factory.setPassword(password);
+        return factory;
+    }
 
     @Bean
     public Jackson2JsonMessageConverter messageConverter() {

@@ -42,10 +42,10 @@ public class RetryFilter implements GlobalFilter, Ordered {
                             exchange.getResponse().getStatusCode() != null ?
                                     exchange.getResponse().getStatusCode().value() : 0);
 
-                    if (status != null && isRetryable(status) && currentAttempt <= retryStrategy.maxAttempts()) {
+                    if (status != null && isRetryable(status) && currentAttempt <= retryStrategy.getMaxAttempts()) {
                         long delay = retryStrategy.computeBackoff(currentAttempt);
                         log.warn("Retry attempt {}/{} after {}ms, status={}",
-                                currentAttempt, retryStrategy.maxAttempts(), delay, status);
+                                currentAttempt, retryStrategy.getMaxAttempts(), delay, status);
 
                         return Mono.delay(java.time.Duration.ofMillis(delay))
                                 .then(attemptRequest(exchange, chain, attempt));

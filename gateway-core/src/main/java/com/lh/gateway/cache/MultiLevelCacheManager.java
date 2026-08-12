@@ -32,7 +32,7 @@ public class MultiLevelCacheManager implements CacheManager {
         return localCache.get(cacheKey)
                 .switchIfEmpty(Mono.defer(() ->
                         redisCache.get(cacheKey)
-                                .doOnNext(localCache::put)));
+                                .doOnNext(v -> localCache.put(cacheKey, v))));
     }
 
     @Override

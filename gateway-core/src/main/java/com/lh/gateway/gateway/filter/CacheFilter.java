@@ -4,7 +4,6 @@ import com.lh.gateway.cache.CacheKeyGenerator;
 import com.lh.gateway.cache.MultiLevelCacheManager;
 import com.lh.gateway.model.LlmRequest;
 import com.lh.gateway.model.LlmResponse;
-import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.cloud.gateway.filter.GatewayFilter;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
@@ -29,7 +28,6 @@ import java.nio.charset.StandardCharsets;
  */
 @Slf4j
 @Component
-@RequiredArgsConstructor
 public class CacheFilter extends AbstractGatewayFilterFactory<CacheFilter.Config> {
 
     private static final String CACHE_HIT_ATTR = "cacheHit";
@@ -38,8 +36,10 @@ public class CacheFilter extends AbstractGatewayFilterFactory<CacheFilter.Config
     private final MultiLevelCacheManager cacheManager;
     private final CacheKeyGenerator keyGenerator;
 
-    public CacheFilter() {
+    public CacheFilter(MultiLevelCacheManager cacheManager, CacheKeyGenerator keyGenerator) {
         super(Config.class);
+        this.cacheManager = cacheManager;
+        this.keyGenerator = keyGenerator;
     }
 
     @Override
