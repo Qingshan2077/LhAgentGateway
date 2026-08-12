@@ -4,8 +4,6 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lh.gateway.cache.CacheKeyGenerator;
 import com.lh.gateway.cache.MultiLevelCacheManager;
 import com.lh.gateway.circuitbreaker.CircuitBreakerFactory;
-import com.lh.gateway.circuitbreaker.FallbackHandler;
-import com.lh.gateway.circuitbreaker.ProviderCircuitBreaker;
 import com.lh.gateway.model.LlmRequest;
 import com.lh.gateway.model.LlmResponse;
 import lombok.extern.slf4j.Slf4j;
@@ -35,9 +33,9 @@ import java.util.List;
  * <p>流程：读请求体 → 生成缓存 Key → 查缓存（布隆 → 本地 Caffeine → Redis），
  * 命中直接返回；未命中转发上游，并在响应完成后把结果写回缓存（写 Redis + 布隆 + 本地）。</p>
  *
- * <p>同时承担熔断降级：转发前检查 Provider 熔断状态，熔断时调用 {@link FallbackHandler}
- * 切换到备选 Provider（或返回降级响应）；转发完成后把调用结果回喂熔断器
- * （{@link ProviderCircuitBreaker#recordResult}），驱动滑动窗口错误率统计。</p>
+ * <p>熔断配合：转发完成后把调用结果回喂熔断器
+ * （{@link com.lh.gateway.circuitbreaker.ProviderCircuitBreaker#recordResult}），
+ * 驱动滑动窗口错误率统计；熔断拦截与备选 Provider 降级在 {@link RouterFilter} 中完成。</p>
  *
  * <p>只缓存非流式请求（stream=false）的 2xx 响应。缓存命中响应带 {@code X-Cache: HIT} 头，
  * 熔断降级响应带 {@code X-Circuit-Breaker: OPEN} 头。</p>
@@ -56,7 +54,6 @@ public class CacheFilter implements GlobalFilter, Ordered {
     private final MultiLevelCacheManager cacheManager;
     private final CacheKeyGenerator keyGenerator;
     private final CircuitBreakerFactory breakerFactory;
-    private final FallbackHandler fallbackHandler;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     @Value("${llm.cache.enabled:true}")
@@ -67,12 +64,10 @@ public class CacheFilter implements GlobalFilter, Ordered {
 
     public CacheFilter(MultiLevelCacheManager cacheManager,
                        CacheKeyGenerator keyGenerator,
-                       CircuitBreakerFactory breakerFactory,
-                       FallbackHandler fallbackHandler) {
+                       CircuitBreakerFactory breakerFactory) {
         this.cacheManager = cacheManager;
         this.keyGenerator = keyGenerator;
         this.breakerFactory = breakerFactory;
-        this.fallbackHandler = fallbackHandler;
     }
 
     @Override
@@ -110,37 +105,19 @@ public class CacheFilter implements GlobalFilter, Ordered {
                             })
                             .switchIfEmpty(Mono.defer(() -> {
                                 log.debug("Cache MISS: key={}", cacheKey);
-                                return forwardWithCircuitBreaker(exchange, chain, bytes, cacheKey, request);
+                                return forwardAndCache(exchange, chain, bytes, cacheKey);
                             }));
                 });
     }
 
     /**
-     * 熔断检查后转发：Provider 熔断（OPEN）时切换到备选 Provider 或返回降级响应；
-     * 正常则转发上游，并在响应完成后回喂熔断器结果 + 异步写缓存。
-     */
-    private Mono<Void> forwardWithCircuitBreaker(ServerWebExchange exchange, GatewayFilterChain chain,
-                                                 byte[] requestBody, String cacheKey, LlmRequest request) {
-        String provider = exchange.getRequest().getHeaders().getFirst("X-Provider");
-        ProviderCircuitBreaker breaker = provider != null ? breakerFactory.getBreaker(provider) : null;
-
-        if (breaker != null && !breaker.isCallAllowed()) {
-            log.warn("Circuit breaker OPEN for provider: {}, switching to fallback", provider);
-            return fallbackHandler.fallback(provider, request)
-                    .flatMap(response -> writeFallbackResponse(exchange, response));
-        }
-
-        return forwardAndCache(exchange, chain, requestBody, cacheKey, provider, breaker);
-    }
-
-    /**
      * 转发上游，并用响应装饰器截获响应体：
      * 2xx 时异步写缓存；调用结果回喂熔断器（驱动滑动窗口错误率统计）。
+     * Provider 取自路由选择（RouterFilter 写入的 attribute）或 X-Provider 头。
      * 缓存写失败不影响主响应（异步订阅 + 仅告警日志）。
      */
     private Mono<Void> forwardAndCache(ServerWebExchange exchange, GatewayFilterChain chain,
-                                       byte[] requestBody, String cacheKey,
-                                       String provider, ProviderCircuitBreaker breaker) {
+                                       byte[] requestBody, String cacheKey) {
         ServerHttpResponseDecorator decorator = new ServerHttpResponseDecorator(exchange.getResponse()) {
             @Override
             public Mono<Void> writeWith(Publisher<? extends DataBuffer> body) {
@@ -150,8 +127,9 @@ public class CacheFilter implements GlobalFilter, Ordered {
                         byte[] responseBytes = mergeBuffers(dataBuffers);
                         if (getStatusCode() != null) {
                             boolean success = getStatusCode().is2xxSuccessful();
-                            if (breaker != null) {
-                                breaker.recordResult(success);
+                            String provider = resolveProvider(exchange);
+                            if (provider != null) {
+                                breakerFactory.getBreaker(provider).recordResult(success);
                                 log.debug("Record result for provider={}, success={}", provider, success);
                             }
                             if (success) {
@@ -167,6 +145,15 @@ public class CacheFilter implements GlobalFilter, Ordered {
             }
         };
         return chain.filter(mutateExchange(exchange, requestBody, decorator));
+    }
+
+    /** 取当前请求的 Provider：路由选择优先，其次 X-Provider 头 */
+    private String resolveProvider(ServerWebExchange exchange) {
+        String selected = exchange.getAttribute(RouterFilter.PROVIDER_ATTR);
+        if (selected != null) {
+            return selected;
+        }
+        return exchange.getRequest().getHeaders().getFirst("X-Provider");
     }
 
     /** 异步写缓存：解析响应体 → 写入 Redis + 布隆 + 本地缓存 */
@@ -213,14 +200,6 @@ public class CacheFilter implements GlobalFilter, Ordered {
         ServerHttpResponse httpResponse = exchange.getResponse();
         httpResponse.getHeaders().setContentType(MediaType.APPLICATION_JSON);
         httpResponse.getHeaders().add("X-Cache", "HIT");
-        return writeJsonResponse(exchange, httpResponse, response);
-    }
-
-    /** 熔断降级响应：带 X-Circuit-Breaker: OPEN 标记 */
-    private Mono<Void> writeFallbackResponse(ServerWebExchange exchange, LlmResponse response) {
-        ServerHttpResponse httpResponse = exchange.getResponse();
-        httpResponse.getHeaders().setContentType(MediaType.APPLICATION_JSON);
-        httpResponse.getHeaders().add("X-Circuit-Breaker", "OPEN");
         return writeJsonResponse(exchange, httpResponse, response);
     }
 

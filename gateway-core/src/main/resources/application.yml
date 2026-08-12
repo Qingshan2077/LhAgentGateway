@@ -64,3 +64,15 @@ llm:
     # 缓存总开关：A/B 压测时用 --llm.cache.enabled=false 关闭缓存跑基线
     enabled: ${LLM_CACHE_ENABLED:true}
     ttl-seconds: 300
+  router:
+    # 默认路由策略：weighted | least-latency | consistent-hash（可用 X-Router-Strategy 头覆盖）
+    strategy: weighted
+  providers:
+    # 多 Provider 配置（路由策略选择用）。带 X-Provider 头的请求固定走指定 Provider。
+    # 压测时把 base-url 指向本地 Mock 即可验证三种路由策略。
+    - name: openai
+      base-url: ${LLM_PROVIDER_OPENAI_BASE_URL:${LLM_UPSTREAM_URI:https://api.openai.com}}
+      weight: 3
+    - name: deepseek
+      base-url: ${LLM_PROVIDER_DEEPSEEK_BASE_URL:${LLM_ADAPTER_DEEPSEEK_BASE_URL:https://api.deepseek.com}}
+      weight: 1
