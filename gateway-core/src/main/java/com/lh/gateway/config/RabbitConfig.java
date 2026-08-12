@@ -1,5 +1,6 @@
 package com.lh.gateway.config;
 
+import org.springframework.amqp.rabbit.annotation.EnableRabbit;
 import org.springframework.amqp.rabbit.config.SimpleRabbitListenerContainerFactory;
 import org.springframework.amqp.rabbit.connection.CachingConnectionFactory;
 import org.springframework.amqp.rabbit.connection.ConnectionFactory;
@@ -11,8 +12,13 @@ import org.springframework.context.annotation.Configuration;
 
 /**
  * RabbitMQ 完整配置
+ *
+ * <p>手动声明连接工厂 / 消息转换器 / RabbitTemplate / 监听容器工厂，
+ * 因此 application.yml 中排除了 {@code RabbitAutoConfiguration} 也不影响使用；
+ * {@code @EnableRabbit} 开启 {@code @RabbitListener} 扫描（LogConsumer 消费调用日志）。</p>
  */
 @Configuration
+@EnableRabbit
 public class RabbitConfig {
 
     @Bean

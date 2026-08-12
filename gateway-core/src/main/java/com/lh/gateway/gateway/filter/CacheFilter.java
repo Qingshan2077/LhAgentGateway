@@ -133,6 +133,7 @@ public class CacheFilter implements GlobalFilter, Ordered {
                                 log.debug("Record result for provider={}, success={}", provider, success);
                             }
                             if (success) {
+                                storeUsage(exchange, responseBytes);
                                 cacheResponseAsync(cacheKey, responseBytes);
                             } else {
                                 log.debug("Skip caching, status={}", getStatusCode());
@@ -166,6 +167,18 @@ public class CacheFilter implements GlobalFilter, Ordered {
         } catch (Exception e) {
             // 响应体不是合法 LlmResponse JSON（如上游错误页），跳过缓存，不影响主流程
             log.debug("Skip caching unparseable response: {}", e.getMessage());
+        }
+    }
+
+    /** 提取响应 usage 的 token 总数，存入 attribute 供调用日志（MQ）使用 */
+    private void storeUsage(ServerWebExchange exchange, byte[] responseBytes) {
+        try {
+            LlmResponse response = objectMapper.readValue(responseBytes, LlmResponse.class);
+            if (response.getUsage() != null && response.getUsage().getTotalTokens() != null) {
+                exchange.getAttributes().put("llmTotalTokens", response.getUsage().getTotalTokens());
+            }
+        } catch (Exception e) {
+            log.debug("Skip usage extraction: {}", e.getMessage());
         }
     }
 

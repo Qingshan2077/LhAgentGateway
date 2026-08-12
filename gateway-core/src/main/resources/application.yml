@@ -7,6 +7,13 @@ spring:
     port: 5730
     username: guest
     password: guest
+  datasource:
+    # 调用日志落库（LogConsumer 消费 MQ 后写入）。无 MySQL 时网关仍可启动，仅日志落库失败进 DLQ
+    url: ${LLM_DB_URL:jdbc:mysql://localhost:3306/agent_gateway?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai}
+    username: ${LLM_DB_USERNAME:root}
+    password: ${LLM_DB_PASSWORD:root}
+    hikari:
+      initialization-fail-timeout: -1
   application:
     name: lh-agent-gateway
   autoconfigure:

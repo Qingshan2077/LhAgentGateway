@@ -20,8 +20,13 @@ CREATE TABLE IF NOT EXISTS llm_call_log (
     INDEX idx_created_at (created_at),
     INDEX idx_provider_model (provider, model),
     INDEX idx_app_key (app_key),
-    INDEX idx_status (status)
+    INDEX idx_status (status),
+    UNIQUE INDEX idx_request_id (request_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='LLM 调用日志表';
+
+-- 兼容已初始化过的库（幂等落库 INSERT IGNORE 依赖 request_id 唯一索引）：
+-- 若已存在该索引会报重复，可忽略；新库上面的 CREATE TABLE 已包含。
+-- ALTER TABLE llm_call_log ADD UNIQUE INDEX idx_request_id (request_id);
 
 -- Provider 配置表（管理后台动态配置）
 CREATE TABLE IF NOT EXISTS provider_config (

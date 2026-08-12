@@ -5,9 +5,11 @@ import com.lh.gateway.circuitbreaker.CircuitBreakerFactory;
 import com.lh.gateway.circuitbreaker.FallbackHandler;
 import com.lh.gateway.circuitbreaker.ProviderCircuitBreaker;
 import com.lh.gateway.config.LlmProperties;
+import com.lh.gateway.model.CallLog;
 import com.lh.gateway.model.LlmRequest;
 import com.lh.gateway.model.LlmResponse;
 import com.lh.gateway.model.ProviderConfig;
+import com.lh.gateway.mq.LogProducer;
 import com.lh.gateway.router.LeastLatencyRouter;
 import com.lh.gateway.router.RouterFactory;
 import lombok.extern.slf4j.Slf4j;
@@ -24,6 +26,7 @@ import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
 import java.net.URI;
+import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -53,18 +56,21 @@ public class RouterFilter implements GlobalFilter, Ordered {
     private final CircuitBreakerFactory breakerFactory;
     private final FallbackHandler fallbackHandler;
     private final LeastLatencyRouter leastLatencyRouter;
+    private final LogProducer logProducer;
     private final ObjectMapper objectMapper = new ObjectMapper();
 
     public RouterFilter(LlmProperties llmProperties,
                         RouterFactory routerFactory,
                         CircuitBreakerFactory breakerFactory,
                         FallbackHandler fallbackHandler,
-                        LeastLatencyRouter leastLatencyRouter) {
+                        LeastLatencyRouter leastLatencyRouter,
+                        LogProducer logProducer) {
         this.llmProperties = llmProperties;
         this.routerFactory = routerFactory;
         this.breakerFactory = breakerFactory;
         this.fallbackHandler = fallbackHandler;
         this.leastLatencyRouter = leastLatencyRouter;
+        this.logProducer = logProducer;
     }
 
     @Override
@@ -117,14 +123,49 @@ public class RouterFilter implements GlobalFilter, Ordered {
         exchange.getAttributes().put(ServerWebExchangeUtils.GATEWAY_REQUEST_URL_ATTR, targetUri);
         log.debug("Route selected: provider={}, target={}", provider, targetUri);
 
-        // 转发，完成后记录延迟（供最小延迟策略统计）
+        // 转发，完成后记录延迟（供最小延迟策略统计）+ 构建调用日志发 MQ
         long start = System.nanoTime();
         return chain.filter(exchange)
                 .doOnSuccess(v -> {
                     long latencyMs = (System.nanoTime() - start) / 1_000_000;
                     leastLatencyRouter.recordLatency(provider, latencyMs);
+                    sendCallLog(exchange, provider, latencyMs);
                     log.debug("Route latency: provider={}, {}ms", provider, latencyMs);
                 });
+    }
+
+    /** 构建调用日志（fire-and-forget 发 MQ，失败不影响主流程） */
+    private void sendCallLog(ServerWebExchange exchange, String provider, long latencyMs) {
+        try {
+            CallLog callLog = new CallLog();
+            callLog.setRequestId(exchange.getAttribute("requestId"));
+            callLog.setAppKey(exchange.getAttribute("appKey"));
+            callLog.setProvider(provider);
+            LlmRequest request = exchange.getAttribute("llmRequest");
+            if (request != null) {
+                callLog.setModel(request.getModel());
+            }
+            Integer totalTokens = exchange.getAttribute("llmTotalTokens");
+            callLog.setTotalTokens(totalTokens != null ? totalTokens : 0);
+            callLog.setLatencyMs((int) latencyMs);
+
+            HttpStatus status = resolveStatus(exchange);
+            boolean success = status != null && status.is2xxSuccessful();
+            callLog.setStatus(success ? "success" : "fail");
+            callLog.setErrorMessage(success ? null : String.valueOf(status));
+            callLog.setCreatedAt(LocalDateTime.now());
+
+            logProducer.sendLog(callLog);
+        } catch (Exception e) {
+            log.warn("Failed to build call log: {}", e.getMessage());
+        }
+    }
+
+    private HttpStatus resolveStatus(ServerWebExchange exchange) {
+        if (exchange.getResponse().getStatusCode() == null) {
+            return null;
+        }
+        return HttpStatus.resolve(exchange.getResponse().getStatusCode().value());
     }
 
     private List<ProviderConfig> enabledProviders() {
