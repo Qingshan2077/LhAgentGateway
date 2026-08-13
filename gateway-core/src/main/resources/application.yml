@@ -58,6 +58,8 @@ resilience4j:
 llm:
   upstream:
     uri: ${LLM_UPSTREAM_URI:https://api.openai.com}
+    # 未经过动态路由时对应的默认 Provider（流式请求/静态路由仍需进入 Provider 桶）
+    provider: ${LLM_UPSTREAM_PROVIDER:openai}
   adapter:
     # 供应商 base-url（熔断降级/健康检查路径用；压测验证备选切换时指向本地 Mock）
     openai:
