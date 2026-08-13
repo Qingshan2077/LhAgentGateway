@@ -78,4 +78,12 @@ public class ProviderConfigController {
         providerConfigService.updateWeight(name, weight);
         return ResponseEntity.ok().build();
     }
+
+    /** 删除 Provider 配置。 */
+    @DeleteMapping("/{name}")
+    public ResponseEntity<Void> delete(@PathVariable String name) {
+        return providerConfigService.deleteByName(name)
+                ? ResponseEntity.noContent().build()
+                : ResponseEntity.notFound().build();
+    }
 }

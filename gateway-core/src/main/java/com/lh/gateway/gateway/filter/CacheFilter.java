@@ -166,8 +166,16 @@ public class CacheFilter implements GlobalFilter, Ordered {
     private void storeUsage(ServerWebExchange exchange, byte[] responseBytes) {
         try {
             LlmResponse response = objectMapper.readValue(responseBytes, LlmResponse.class);
-            if (response.getUsage() != null && response.getUsage().getTotalTokens() != null) {
-                exchange.getAttributes().put("llmTotalTokens", response.getUsage().getTotalTokens());
+            if (response.getUsage() != null) {
+                if (response.getUsage().getPromptTokens() != null) {
+                    exchange.getAttributes().put("llmPromptTokens", response.getUsage().getPromptTokens());
+                }
+                if (response.getUsage().getCompletionTokens() != null) {
+                    exchange.getAttributes().put("llmCompletionTokens", response.getUsage().getCompletionTokens());
+                }
+                if (response.getUsage().getTotalTokens() != null) {
+                    exchange.getAttributes().put("llmTotalTokens", response.getUsage().getTotalTokens());
+                }
             }
         } catch (Exception e) {
             log.debug("Skip usage extraction: {}", e.getMessage());
@@ -197,6 +205,7 @@ public class CacheFilter implements GlobalFilter, Ordered {
         httpResponse.getHeaders().setContentType(MediaType.APPLICATION_JSON);
         httpResponse.getHeaders().add("X-Cache", "HIT");
         byte[] body = responseJson.getBytes(StandardCharsets.UTF_8);
+        storeUsage(exchange, body);
         DataBuffer buffer = httpResponse.bufferFactory().wrap(body);
         return httpResponse.writeWith(Mono.just(buffer));
     }

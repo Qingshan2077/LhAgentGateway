@@ -5,12 +5,10 @@ import com.lh.gateway.circuitbreaker.CircuitBreakerFactory;
 import com.lh.gateway.circuitbreaker.FallbackHandler;
 import com.lh.gateway.circuitbreaker.ProviderCircuitBreaker;
 import com.lh.gateway.config.LlmProperties;
-import com.lh.gateway.model.CallLog;
 import com.lh.gateway.model.LlmRequest;
 import com.lh.gateway.model.LlmResponse;
 import com.lh.gateway.model.ProviderConfig;
 import com.lh.gateway.monitor.CustomMetrics;
-import com.lh.gateway.mq.LogProducer;
 import com.lh.gateway.router.LeastLatencyRouter;
 import com.lh.gateway.router.RouterFactory;
 import com.lh.gateway.router.RoutingContext;
@@ -28,7 +26,6 @@ import org.springframework.web.server.ServerWebExchange;
 import reactor.core.publisher.Mono;
 
 import java.net.URI;
-import java.time.LocalDateTime;
 import java.util.List;
 
 /**
@@ -58,7 +55,6 @@ public class RouterFilter implements GlobalFilter, Ordered {
     private final CircuitBreakerFactory breakerFactory;
     private final FallbackHandler fallbackHandler;
     private final LeastLatencyRouter leastLatencyRouter;
-    private final LogProducer logProducer;
     private final CustomMetrics customMetrics;
     private final ObjectMapper objectMapper;
 
@@ -67,7 +63,6 @@ public class RouterFilter implements GlobalFilter, Ordered {
                         CircuitBreakerFactory breakerFactory,
                         FallbackHandler fallbackHandler,
                         LeastLatencyRouter leastLatencyRouter,
-                        LogProducer logProducer,
                         CustomMetrics customMetrics,
                         ObjectMapper objectMapper) {
         this.llmProperties = llmProperties;
@@ -75,7 +70,6 @@ public class RouterFilter implements GlobalFilter, Ordered {
         this.breakerFactory = breakerFactory;
         this.fallbackHandler = fallbackHandler;
         this.leastLatencyRouter = leastLatencyRouter;
-        this.logProducer = logProducer;
         this.customMetrics = customMetrics;
         this.objectMapper = objectMapper;
     }
@@ -182,13 +176,11 @@ public class RouterFilter implements GlobalFilter, Ordered {
                         leastLatencyRouter.recordLatency(provider, latencyMs);
                     }
                     recordMetrics(exchange, provider, request, latencyMs, null);
-                    sendCallLog(exchange, provider, latencyMs, null);
                     log.debug("Route latency: provider={}, {}ms", provider, latencyMs);
                 })
                 .doOnError(error -> {
                     long latencyMs = (System.nanoTime() - start) / 1_000_000;
                     recordMetrics(exchange, provider, request, latencyMs, error);
-                    sendCallLog(exchange, provider, latencyMs, error);
                 });
     }
 
@@ -209,35 +201,6 @@ public class RouterFilter implements GlobalFilter, Ordered {
             }
         } catch (Exception e) {
             log.warn("Failed to record metrics: {}", e.getMessage());
-        }
-    }
-
-    /** 构建调用日志（fire-and-forget 发 MQ，失败不影响主流程） */
-    private void sendCallLog(ServerWebExchange exchange, String provider,
-                             long latencyMs, Throwable error) {
-        try {
-            CallLog callLog = new CallLog();
-            callLog.setRequestId(exchange.getAttribute("requestId"));
-            callLog.setAppKey(exchange.getAttribute("appKey"));
-            callLog.setProvider(provider);
-            LlmRequest request = exchange.getAttribute(LlmRequestContextFilter.LLM_REQUEST_ATTR);
-            if (request != null) {
-                callLog.setModel(request.getModel());
-            }
-            Integer totalTokens = exchange.getAttribute("llmTotalTokens");
-            callLog.setTotalTokens(totalTokens != null ? totalTokens : 0);
-            callLog.setLatencyMs((int) latencyMs);
-
-            HttpStatus status = resolveStatus(exchange);
-            boolean success = error == null && (status == null || status.is2xxSuccessful());
-            callLog.setStatus(success ? "success" : "fail");
-            callLog.setErrorMessage(success ? null
-                    : error != null ? error.getMessage() : String.valueOf(status));
-            callLog.setCreatedAt(LocalDateTime.now());
-
-            logProducer.sendLog(callLog);
-        } catch (Exception e) {
-            log.warn("Failed to build call log: {}", e.getMessage());
         }
     }
 
@@ -323,6 +286,14 @@ public class RouterFilter implements GlobalFilter, Ordered {
         httpResponse.getHeaders().add("X-Circuit-Breaker", "OPEN");
         byte[] body;
         try {
+            if (response.getUsage() != null) {
+                exchange.getAttributes().put("llmPromptTokens",
+                        response.getUsage().getPromptTokens() != null ? response.getUsage().getPromptTokens() : 0);
+                exchange.getAttributes().put("llmCompletionTokens",
+                        response.getUsage().getCompletionTokens() != null ? response.getUsage().getCompletionTokens() : 0);
+                exchange.getAttributes().put("llmTotalTokens",
+                        response.getUsage().getTotalTokens() != null ? response.getUsage().getTotalTokens() : 0);
+            }
             body = objectMapper.writeValueAsBytes(response);
         } catch (Exception e) {
             log.error("Serialize fallback response failed", e);

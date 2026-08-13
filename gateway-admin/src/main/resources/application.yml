@@ -31,3 +31,7 @@ mybatis-plus:
 logging:
   level:
     com.lh.gateway.admin: DEBUG
+
+admin:
+  cors:
+    allowed-origins: ${ADMIN_CORS_ALLOWED_ORIGINS:http://localhost:5173}

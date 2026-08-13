@@ -39,11 +39,16 @@ CREATE TABLE IF NOT EXISTS provider_config (
     rate_limit_rpm  INT          DEFAULT 60 COMMENT '每分钟请求数限制',
     rate_limit_tpm  INT          DEFAULT 100000 COMMENT '每分钟 Token 数限制',
     enabled         TINYINT      DEFAULT 1 COMMENT '是否启用',
+    routing_enabled TINYINT      DEFAULT 1 COMMENT '是否允许 OpenAI 兼容协议直转',
     created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
 
     UNIQUE INDEX idx_name (name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Provider 配置表';
+
+-- 兼容旧表结构；MySQL 8 支持 IF NOT EXISTS。
+ALTER TABLE provider_config
+    ADD COLUMN IF NOT EXISTS routing_enabled TINYINT DEFAULT 1 COMMENT '是否允许 OpenAI 兼容协议直转';
 
 -- 插入默认 Provider 配置
 INSERT INTO provider_config (name, display_name, base_url, api_key, weight, rate_limit_rpm, rate_limit_tpm) VALUES

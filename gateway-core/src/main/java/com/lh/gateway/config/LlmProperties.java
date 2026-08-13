@@ -22,7 +22,7 @@ public class LlmProperties {
     private Router router = new Router();
 
     /** 多 Provider 配置（用于路由策略选择） */
-    private List<ProviderConfig> providers = new ArrayList<>();
+    private volatile List<ProviderConfig> providers = new ArrayList<>();
 
     public Router getRouter() {
         return router;
@@ -37,7 +37,7 @@ public class LlmProperties {
     }
 
     public void setProviders(List<ProviderConfig> providers) {
-        this.providers = providers;
+        this.providers = providers != null ? List.copyOf(providers) : List.of();
     }
 
     public static class Router {

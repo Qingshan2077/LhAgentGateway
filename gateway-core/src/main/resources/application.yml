@@ -56,6 +56,9 @@ resilience4j:
         permitted-number-of-calls-in-half-open-state: 3
 
 llm:
+  provider-config:
+    # gateway-admin 修改数据库后，网关在该周期内热刷新路由和降级 Adapter。
+    refresh-ms: ${LLM_PROVIDER_CONFIG_REFRESH_MS:5000}
   upstream:
     uri: ${LLM_UPSTREAM_URI:https://api.openai.com}
     # 未经过动态路由时对应的默认 Provider（流式请求/静态路由仍需进入 Provider 桶）

@@ -9,8 +9,8 @@ import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 
 import java.util.Locale;
+import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.ConcurrentHashMap;
 
 /**
  * 适配器工厂
@@ -27,7 +27,7 @@ public class AdapterFactory {
 
     private static final Logger log = LoggerFactory.getLogger(AdapterFactory.class);
 
-    private final Map<String, LlmAdapter> adapterMap = new ConcurrentHashMap<>();
+    private volatile Map<String, LlmAdapter> adapterMap = Map.of();
     private final WebClient.Builder webClientBuilder;
     private final LlmProperties llmProperties;
 
@@ -38,14 +38,21 @@ public class AdapterFactory {
 
     @PostConstruct
     public void initDefaultAdapters() {
-        llmProperties.getProviders().stream()
+        reloadAdapters(llmProperties.getProviders());
+    }
+
+    /** 配置热更新时原子刷新可用 Adapter 集合。 */
+    public synchronized void reloadAdapters(java.util.List<ProviderConfig> providers) {
+        Map<String, LlmAdapter> refreshed = new HashMap<>();
+        providers.stream()
                 .filter(ProviderConfig::isEnabled)
                 .filter(config -> config.getName() != null && config.getBaseUrl() != null)
-                .forEach(this::registerConfiguredAdapter);
+                .forEach(config -> registerConfiguredAdapter(config, refreshed));
+        adapterMap = Map.copyOf(refreshed);
         log.info("Registered LLM fallback adapters: {}", adapterMap.keySet());
     }
 
-    private void registerConfiguredAdapter(ProviderConfig config) {
+    private void registerConfiguredAdapter(ProviderConfig config, Map<String, LlmAdapter> targetMap) {
         String provider = normalize(config.getName());
         WebClient webClient = webClientBuilder.clone().baseUrl(config.getBaseUrl()).build();
         LlmAdapter adapter = switch (provider) {
@@ -58,11 +65,13 @@ public class AdapterFactory {
             log.warn("No fallback adapter implementation for provider: {}", provider);
             return;
         }
-        register(adapter);
+        targetMap.put(adapter.providerName(), adapter);
     }
 
-    public void register(LlmAdapter adapter) {
-        adapterMap.put(adapter.providerName(), adapter);
+    public synchronized void register(LlmAdapter adapter) {
+        Map<String, LlmAdapter> refreshed = new HashMap<>(adapterMap);
+        refreshed.put(adapter.providerName(), adapter);
+        adapterMap = Map.copyOf(refreshed);
     }
 
     public LlmAdapter getAdapter(String providerName) {

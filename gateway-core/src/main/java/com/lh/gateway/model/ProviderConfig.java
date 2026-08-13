@@ -1,5 +1,10 @@
 package com.lh.gateway.model;
 
+import com.baomidou.mybatisplus.annotation.IdType;
+import com.baomidou.mybatisplus.annotation.TableField;
+import com.baomidou.mybatisplus.annotation.TableId;
+import com.baomidou.mybatisplus.annotation.TableName;
+
 import java.math.BigDecimal;
 import java.time.LocalDateTime;
 import java.util.Map;
@@ -7,11 +12,15 @@ import java.util.Map;
 /**
  * Provider 配置模型
  */
+@TableName("provider_config")
 public class ProviderConfig {
+    @TableId(type = IdType.AUTO)
+    private Long id;
     private String name;
     private String displayName;
     private String baseUrl;
     private String apiKey;
+    @TableField(exist = false)
     private Map<String, ModelConfig> models;
     private Integer weight;
     private Boolean enabled = true;
@@ -19,7 +28,11 @@ public class ProviderConfig {
     private Boolean routingEnabled = true;
     private Integer rateLimitRpm;
     private Integer rateLimitTpm;
+    private LocalDateTime createdAt;
+    private LocalDateTime updatedAt;
 
+    public Long getId() { return id; }
+    public void setId(Long id) { this.id = id; }
     public String getName() { return name; }
     public void setName(String name) { this.name = name; }
     public String getDisplayName() { return displayName; }
@@ -42,6 +55,10 @@ public class ProviderConfig {
     public void setRateLimitRpm(Integer rateLimitRpm) { this.rateLimitRpm = rateLimitRpm; }
     public Integer getRateLimitTpm() { return rateLimitTpm; }
     public void setRateLimitTpm(Integer rateLimitTpm) { this.rateLimitTpm = rateLimitTpm; }
+    public LocalDateTime getCreatedAt() { return createdAt; }
+    public void setCreatedAt(LocalDateTime createdAt) { this.createdAt = createdAt; }
+    public LocalDateTime getUpdatedAt() { return updatedAt; }
+    public void setUpdatedAt(LocalDateTime updatedAt) { this.updatedAt = updatedAt; }
 
     public static class ModelConfig {
         private String name;

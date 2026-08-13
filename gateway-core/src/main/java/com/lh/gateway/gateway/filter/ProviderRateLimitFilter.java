@@ -2,6 +2,8 @@ package com.lh.gateway.gateway.filter;
 
 import com.lh.gateway.limiter.RateLimitResult;
 import com.lh.gateway.limiter.RateLimiter;
+import com.lh.gateway.config.LlmProperties;
+import com.lh.gateway.model.ProviderConfig;
 import com.lh.gateway.monitor.CustomMetrics;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.beans.factory.annotation.Value;
@@ -33,6 +35,7 @@ public class ProviderRateLimitFilter implements GlobalFilter, Ordered {
 
     private final RateLimiter rateLimiter;
     private final CustomMetrics customMetrics;
+    private final LlmProperties llmProperties;
 
     @Value("${llm.rate-limit.provider-capacity:200}")
     private int providerCapacity;
@@ -43,9 +46,12 @@ public class ProviderRateLimitFilter implements GlobalFilter, Ordered {
     @Value("${llm.upstream.provider:openai}")
     private String defaultProvider;
 
-    public ProviderRateLimitFilter(RateLimiter rateLimiter, CustomMetrics customMetrics) {
+    public ProviderRateLimitFilter(RateLimiter rateLimiter,
+                                   CustomMetrics customMetrics,
+                                   LlmProperties llmProperties) {
         this.rateLimiter = rateLimiter;
         this.customMetrics = customMetrics;
+        this.llmProperties = llmProperties;
     }
 
     @Override
@@ -62,8 +68,9 @@ public class ProviderRateLimitFilter implements GlobalFilter, Ordered {
             return exchange.getResponse().setComplete();
         }
 
+        int[] limits = resolveLimits(provider);
         return rateLimiter.tryAcquire(
-                        "provider:" + provider, providerCapacity, providerRate, 1)
+                        "provider:" + provider, limits[0], limits[1], 1)
                 .flatMap(result -> {
                     if (!result.isAllowed()) {
                         return denyRequest(exchange, result, provider);
@@ -88,6 +95,22 @@ public class ProviderRateLimitFilter implements GlobalFilter, Ordered {
         }
 
         return hasText(defaultProvider) ? normalize(defaultProvider) : null;
+    }
+
+    /** 管理后台 rateLimitRpm 热更新后直接影响 Provider 桶；未配置时使用全局默认值。 */
+    private int[] resolveLimits(String provider) {
+        Integer rpm = llmProperties.getProviders().stream()
+                .filter(config -> config.getName() != null && config.getName().equalsIgnoreCase(provider))
+                .map(ProviderConfig::getRateLimitRpm)
+                .filter(value -> value != null && value > 0)
+                .findFirst()
+                .orElse(null);
+        if (rpm == null) {
+            return new int[]{providerCapacity, providerRate};
+        }
+        int capacity = Math.max(1, rpm);
+        int refillPerSecond = Math.max(1, (rpm + 59) / 60);
+        return new int[]{capacity, refillPerSecond};
     }
 
     private Mono<Void> denyRequest(ServerWebExchange exchange,
