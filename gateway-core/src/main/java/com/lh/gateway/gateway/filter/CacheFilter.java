@@ -20,6 +20,7 @@ import org.springframework.core.io.buffer.DataBuffer;
 import org.springframework.core.io.buffer.DataBufferUtils;
 import org.springframework.http.MediaType;
 import org.springframework.http.server.reactive.ServerHttpRequest;
+import org.springframework.http.server.reactive.ServerHttpRequestDecorator;
 import org.springframework.http.server.reactive.ServerHttpResponse;
 import org.springframework.http.server.reactive.ServerHttpResponseDecorator;
 import org.springframework.stereotype.Component;
@@ -277,9 +278,22 @@ public class CacheFilter implements GlobalFilter, Ordered {
     /** 重建请求（带上已读取的 body）并替换响应 */
     private ServerWebExchange mutateExchange(ServerWebExchange exchange, byte[] body,
                                              ServerHttpResponse response) {
-        ServerHttpRequest newRequest = exchange.getRequest().mutate()
-                .body(Flux.just(exchange.getResponse().bufferFactory().wrap(body)))
-                .build();
+        ServerHttpRequest newRequest = new ServerHttpRequestDecorator(exchange.getRequest()) {
+            @Override
+            public org.springframework.http.HttpHeaders getHeaders() {
+                org.springframework.http.HttpHeaders headers = new org.springframework.http.HttpHeaders();
+                headers.putAll(super.getHeaders());
+                headers.remove(org.springframework.http.HttpHeaders.TRANSFER_ENCODING);
+                headers.setContentLength(body.length);
+                return headers;
+            }
+
+            @Override
+            public Flux<DataBuffer> getBody() {
+                DataBuffer buffer = exchange.getResponse().bufferFactory().wrap(body);
+                return Flux.just(buffer);
+            }
+        };
         return exchange.mutate().request(newRequest).response(response).build();
     }
 
