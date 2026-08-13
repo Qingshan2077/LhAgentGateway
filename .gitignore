@@ -5,6 +5,9 @@
 target/
 !.mvn/wrapper/maven-wrapper.jar
 
+#frontend
+/gateway-admin-ui/node_modules/
+
 out/
 # IDE
 .idea/
@@ -30,3 +33,5 @@ docs/
 !README.md
 
 /load-test/README.md
+
+/.run/AdminApplication.run.xml

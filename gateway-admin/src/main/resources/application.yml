@@ -6,7 +6,7 @@ spring:
     name: lh-agent-gateway-admin
 
   datasource:
-    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/agent_gateway?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&characterEncoding=utf8mb4
+    url: jdbc:mysql://${MYSQL_HOST:localhost}:${MYSQL_PORT:3306}/agent_gateway?useSSL=false&allowPublicKeyRetrieval=true&serverTimezone=Asia/Shanghai&characterEncoding=UTF-8
     username: ${MYSQL_USER:root}
     password: ${MYSQL_PASS:root}
     driver-class-name: com.mysql.cj.jdbc.Driver

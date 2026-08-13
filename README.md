@@ -61,6 +61,7 @@ lh-agent-gateway/
 cd lh-agent-gateway
 docker compose up -d
 
+docker start lh-gateway-redis lh-mysql lh-rabbit
 # 2. 编译
 ./mvnw clean compile
 
@@ -73,6 +74,11 @@ curl -X POST http://localhost:8080/v1/chat/completions \
   -H "X-Provider: openai" \
   -H "X-Api-Key: test-key" \
   -d '{"model":"gpt-3.5-turbo","messages":[{"role":"user","content":"Hello"}]}'
+  
+# 5.前端界面
+cd gateway-admin-ui
+npm install
+npm run dev
 ```
 
 ## 开发进度

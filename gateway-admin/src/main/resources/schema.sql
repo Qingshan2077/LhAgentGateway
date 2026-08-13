@@ -46,9 +46,21 @@ CREATE TABLE IF NOT EXISTS provider_config (
     UNIQUE INDEX idx_name (name)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='Provider 配置表';
 
--- 兼容旧表结构；MySQL 8 支持 IF NOT EXISTS。
-ALTER TABLE provider_config
-    ADD COLUMN IF NOT EXISTS routing_enabled TINYINT DEFAULT 1 COMMENT '是否允许 OpenAI 兼容协议直转';
+-- 兼容不支持 ADD COLUMN IF NOT EXISTS 的 MySQL 版本，同时保证脚本可重复执行。
+SET @provider_routing_ddl = (
+    SELECT IF(
+        COUNT(*) = 0,
+        'ALTER TABLE provider_config ADD COLUMN routing_enabled TINYINT DEFAULT 1',
+        'SELECT 1'
+    )
+    FROM information_schema.COLUMNS
+    WHERE TABLE_SCHEMA = DATABASE()
+      AND TABLE_NAME = 'provider_config'
+      AND COLUMN_NAME = 'routing_enabled'
+);
+PREPARE provider_routing_stmt FROM @provider_routing_ddl;
+EXECUTE provider_routing_stmt;
+DEALLOCATE PREPARE provider_routing_stmt;
 
 -- 插入默认 Provider 配置
 INSERT INTO provider_config (name, display_name, base_url, api_key, weight, rate_limit_rpm, rate_limit_tpm) VALUES

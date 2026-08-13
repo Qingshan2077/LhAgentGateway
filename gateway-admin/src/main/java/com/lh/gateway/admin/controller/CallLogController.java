@@ -26,13 +26,13 @@ public class CallLogController {
      */
     @GetMapping
     public ResponseEntity<List<CallLog>> queryLogs(
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime startTime,
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime endTime,
-            @RequestParam(required = false) String provider,
-            @RequestParam(required = false) String model,
-            @RequestParam(required = false) String status,
-            @RequestParam(defaultValue = "1") int page,
-            @RequestParam(defaultValue = "20") int size) {
+            @RequestParam("startTime") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime startTime,
+            @RequestParam("endTime") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime endTime,
+            @RequestParam(value = "provider", required = false) String provider,
+            @RequestParam(value = "model", required = false) String model,
+            @RequestParam(value = "status", required = false) String status,
+            @RequestParam(value = "page", defaultValue = "1") int page,
+            @RequestParam(value = "size", defaultValue = "20") int size) {
 
         List<CallLog> logs = callLogService.queryLogs(startTime, endTime, provider, model, status, page, size);
         return ResponseEntity.ok(logs);
@@ -43,8 +43,8 @@ public class CallLogController {
      */
     @GetMapping("/cost-summary")
     public ResponseEntity<Map<String, Object>> getCostSummary(
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime startTime,
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime endTime) {
+            @RequestParam("startTime") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime startTime,
+            @RequestParam("endTime") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime endTime) {
 
         Map<String, Object> summary = callLogService.getCostSummary(startTime, endTime);
         return ResponseEntity.ok(summary);
@@ -55,8 +55,8 @@ public class CallLogController {
      */
     @GetMapping("/by-provider")
     public ResponseEntity<List<Map<String, Object>>> groupByProvider(
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime startTime,
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime endTime) {
+            @RequestParam("startTime") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime startTime,
+            @RequestParam("endTime") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime endTime) {
 
         List<Map<String, Object>> stats = callLogService.groupByProvider(startTime, endTime);
         return ResponseEntity.ok(stats);
@@ -69,8 +69,8 @@ public class CallLogController {
     public ResponseEntity<List<Map<String, Object>>>
 
     getDailyTokenUsage(
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime startTime,
-            @RequestParam @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime endTime) {
+            @RequestParam("startTime") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime startTime,
+            @RequestParam("endTime") @DateTimeFormat(iso = DateTimeFormat.ISO.DATE_TIME) LocalDateTime endTime) {
 
         List<Map<String, Object>> stats = callLogService.getDailyTokenUsage(startTime, endTime);
         return ResponseEntity.ok(stats);

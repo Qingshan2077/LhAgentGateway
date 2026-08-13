@@ -30,7 +30,7 @@ public class ProviderConfigController {
      * 获取单个 Provider 配置
      */
     @GetMapping("/{name}")
-    public ResponseEntity<ProviderConfig> getByName(@PathVariable String name) {
+    public ResponseEntity<ProviderConfig> getByName(@PathVariable("name") String name) {
         ProviderConfig config = providerConfigService.getByName(name);
         if (config == null) {
             return ResponseEntity.notFound().build();
@@ -43,7 +43,7 @@ public class ProviderConfigController {
      */
     @PutMapping("/{name}")
     public ResponseEntity<Void> saveOrUpdate(
-            @PathVariable String name,
+            @PathVariable("name") String name,
             @RequestBody ProviderConfig config) {
         config.setName(name);
         providerConfigService.saveOrUpdate(config);
@@ -54,7 +54,7 @@ public class ProviderConfigController {
      * 启用 Provider
      */
     @PostMapping("/{name}/enable")
-    public ResponseEntity<Void> enable(@PathVariable String name) {
+    public ResponseEntity<Void> enable(@PathVariable("name") String name) {
         providerConfigService.setEnabled(name, true);
         return ResponseEntity.ok().build();
     }
@@ -63,7 +63,7 @@ public class ProviderConfigController {
      * 禁用 Provider
      */
     @PostMapping("/{name}/disable")
-    public ResponseEntity<Void> disable(@PathVariable String name) {
+    public ResponseEntity<Void> disable(@PathVariable("name") String name) {
         providerConfigService.setEnabled(name, false);
         return ResponseEntity.ok().build();
     }
@@ -73,15 +73,15 @@ public class ProviderConfigController {
      */
     @PatchMapping("/{name}/weight")
     public ResponseEntity<Void> updateWeight(
-            @PathVariable String name,
-            @RequestParam int weight) {
+            @PathVariable("name") String name,
+            @RequestParam("weight") int weight) {
         providerConfigService.updateWeight(name, weight);
         return ResponseEntity.ok().build();
     }
 
     /** 删除 Provider 配置。 */
     @DeleteMapping("/{name}")
-    public ResponseEntity<Void> delete(@PathVariable String name) {
+    public ResponseEntity<Void> delete(@PathVariable("name") String name) {
         return providerConfigService.deleteByName(name)
                 ? ResponseEntity.noContent().build()
                 : ResponseEntity.notFound().build();

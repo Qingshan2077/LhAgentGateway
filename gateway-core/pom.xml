@@ -91,13 +91,6 @@
             <artifactId>jackson-databind</artifactId>
         </dependency>
 
-        <!-- ProviderConfig 同时作为管理库实体使用 -->
-        <dependency>
-            <groupId>com.baomidou</groupId>
-            <artifactId>mybatis-plus-annotation</artifactId>
-            <version>${mybatis-plus.version}</version>
-        </dependency>
-
         <!-- 工具 -->
         <dependency>
             <groupId>org.projectlombok</groupId>
