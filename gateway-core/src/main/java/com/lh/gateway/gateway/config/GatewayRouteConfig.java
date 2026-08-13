@@ -19,7 +19,7 @@ public class GatewayRouteConfig {
     public RouteLocator customRouteLocator(RouteLocatorBuilder builder) {
         return builder.routes()
                 .route("llm_proxy", r -> r
-                        .path("/v1/chat/completions")
+                        .path("/v1/**")
                         .uri(llmUpstreamUri))
                 .build();
     }

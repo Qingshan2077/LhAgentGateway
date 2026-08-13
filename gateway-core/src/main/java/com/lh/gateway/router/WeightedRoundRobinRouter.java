@@ -21,7 +21,7 @@ public class WeightedRoundRobinRouter implements RouterStrategy {
     private final AtomicInteger counter = new AtomicInteger(0);
 
     @Override
-    public Mono<String> select(List<ProviderConfig> providers, String model) {
+    public Mono<String> select(List<ProviderConfig> providers, RoutingContext context) {
         if (providers == null || providers.isEmpty()) {
             return Mono.error(new IllegalStateException("No available providers"));
         }

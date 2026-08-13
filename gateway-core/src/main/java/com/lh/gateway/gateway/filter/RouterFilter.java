@@ -13,6 +13,7 @@ import com.lh.gateway.monitor.CustomMetrics;
 import com.lh.gateway.mq.LogProducer;
 import com.lh.gateway.router.LeastLatencyRouter;
 import com.lh.gateway.router.RouterFactory;
+import com.lh.gateway.router.RoutingContext;
 import lombok.extern.slf4j.Slf4j;
 import org.springframework.cloud.gateway.filter.GatewayFilterChain;
 import org.springframework.cloud.gateway.filter.GlobalFilter;
@@ -31,9 +32,9 @@ import java.time.LocalDateTime;
 import java.util.List;
 
 /**
- * 路由选择过滤器（GlobalFilter，order = +55）
+ * 路由选择过滤器（GlobalFilter，order = +48）
  *
- * <p>在缓存未命中的转发路径上（CacheFilter 已解析请求体并存入 {@code llmRequest} attribute）：
+ * <p>在 LLM 请求路径上（请求上下文由 {@link LlmRequestContextFilter} 独立准备，与缓存开关无关）：
  * <ol>
  *   <li>选择 Provider：请求头 {@code X-Provider} 优先（指定即走指定供应商）；
  *       否则按策略（{@code llm.router.strategy}，可被 {@code X-Router-Strategy} 头覆盖）从配置的
@@ -81,10 +82,19 @@ public class RouterFilter implements GlobalFilter, Ordered {
 
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
-        // 非 LLM 请求或缓存命中路径（无 llmRequest attribute）直接放行
-        LlmRequest request = exchange.getAttribute("llmRequest");
-        if (request == null) {
+        // 路由入口只由 API 路径决定，不再依赖 CacheFilter 或请求体是否成功解析。
+        if (!isLlmApi(exchange)) {
             return chain.filter(exchange);
+        }
+
+        LlmRequest request = exchange.getAttribute(LlmRequestContextFilter.LLM_REQUEST_ATTR);
+        RoutingContext routingContext = exchange.getAttribute(LlmRequestContextFilter.ROUTING_CONTEXT_ATTR);
+        if (routingContext == null) {
+            routingContext = new RoutingContext(
+                    request != null ? request.getModel() : null,
+                    exchange.getAttribute("appKey"),
+                    exchange.getRequest().getHeaders().getFirst("X-Session-Id"),
+                    exchange.getAttribute("requestId"));
         }
 
         List<ProviderConfig> providers = enabledProviders();
@@ -92,18 +102,18 @@ public class RouterFilter implements GlobalFilter, Ordered {
             return chain.filter(exchange);
         }
 
-        // CacheFilter 已为缓存 Key 提前选择 Provider 时直接复用，避免策略计数器执行两次。
+        // 重试时复用已选 Provider，确保同一次逻辑请求不会因策略计数变化切换上游。
         String preselectedProvider = exchange.getAttribute(PROVIDER_ATTR);
         // 请求头显式指定 Provider → 优先使用；否则按策略选择
         String headerProvider = exchange.getRequest().getHeaders().getFirst("X-Provider");
         Mono<String> selection;
         if (preselectedProvider != null) {
             selection = Mono.just(preselectedProvider);
-        } else if (headerProvider != null) {
+        } else if (headerProvider != null && !headerProvider.isBlank()) {
             selection = Mono.just(headerProvider);
         } else {
             selection = routerFactory.getStrategy(resolveStrategy(exchange))
-                    .select(providers, request.getModel());
+                    .select(providers, routingContext);
         }
 
         return selection.flatMap(provider -> route(exchange, chain, provider, providers, request));
@@ -111,14 +121,17 @@ public class RouterFilter implements GlobalFilter, Ordered {
 
     private Mono<Void> route(ServerWebExchange exchange, GatewayFilterChain chain,
                              String provider, List<ProviderConfig> providers, LlmRequest request) {
+        long start = System.nanoTime();
         ProviderConfig target = providers.stream()
                 .filter(p -> p.getName().equalsIgnoreCase(provider))
                 .findFirst()
                 .orElse(null);
-        // 指定了未配置的 Provider：走默认路由
+        // 显式指定未知 Provider 时不能静默绕过动态路由。
         if (target == null) {
-            log.warn("Provider '{}' not configured, using default route", provider);
-            return chain.filter(exchange);
+            log.warn("Provider '{}' is not enabled or configured", provider);
+            exchange.getAttributes().put(PROVIDER_ATTR, provider);
+            return observe(exchange, provider, request, start,
+                    writeUnknownProviderResponse(exchange, provider), false);
         }
 
         exchange.getAttributes().put(PROVIDER_ATTR, provider);
@@ -127,34 +140,66 @@ public class RouterFilter implements GlobalFilter, Ordered {
         ProviderCircuitBreaker breaker = breakerFactory.getBreaker(provider);
         if (!breaker.isCallAllowed()) {
             log.warn("Circuit breaker OPEN for provider: {}, switching to fallback", provider);
-            return fallbackHandler.fallback(provider, request)
+            if (!isChatCompletion(exchange)) {
+                return observe(exchange, provider, request, start,
+                        writeCircuitOpenResponse(exchange), false);
+            }
+            if (request == null) {
+                return observe(exchange, provider, null, start,
+                        writeInvalidRequestResponse(exchange), false);
+            }
+            Mono<Void> fallback = fallbackHandler.fallback(provider, request)
                     .flatMap(response -> writeFallbackResponse(exchange, response));
+            return observe(exchange, provider, request, start, fallback, false);
         }
 
         // 设置转发目标：provider.base-url + 请求路径
         String path = exchange.getRequest().getPath().value();
-        URI targetUri = URI.create(target.getBaseUrl() + path);
+        String rawQuery = exchange.getRequest().getURI().getRawQuery();
+        String targetUrl = target.getBaseUrl() + path
+                + (rawQuery == null || rawQuery.isBlank() ? "" : "?" + rawQuery);
+        URI targetUri = URI.create(targetUrl);
         exchange.getAttributes().put(ServerWebExchangeUtils.GATEWAY_REQUEST_URL_ATTR, targetUri);
         log.debug("Route selected: provider={}, target={}", provider, targetUri);
 
         // 转发，完成后记录延迟（供最小延迟策略统计）+ 监控指标 + 调用日志发 MQ
-        long start = System.nanoTime();
-        return chain.filter(exchange)
+        return observe(exchange, provider, request, start, chain.filter(exchange), true);
+    }
+
+    private Mono<Void> observe(ServerWebExchange exchange,
+                               String provider,
+                               LlmRequest request,
+                               long start,
+                               Mono<Void> invocation,
+                               boolean recordProviderLatency) {
+        return invocation
                 .doOnSuccess(v -> {
                     long latencyMs = (System.nanoTime() - start) / 1_000_000;
-                    leastLatencyRouter.recordLatency(provider, latencyMs);
-                    recordMetrics(exchange, provider, request, latencyMs);
-                    sendCallLog(exchange, provider, latencyMs);
+                    HttpStatus status = resolveStatus(exchange);
+                    boolean success = status == null || status.is2xxSuccessful();
+                    if (recordProviderLatency && success && !"HIT".equalsIgnoreCase(
+                            exchange.getResponse().getHeaders().getFirst("X-Cache"))) {
+                        leastLatencyRouter.recordLatency(provider, latencyMs);
+                    }
+                    recordMetrics(exchange, provider, request, latencyMs, null);
+                    sendCallLog(exchange, provider, latencyMs, null);
                     log.debug("Route latency: provider={}, {}ms", provider, latencyMs);
+                })
+                .doOnError(error -> {
+                    long latencyMs = (System.nanoTime() - start) / 1_000_000;
+                    recordMetrics(exchange, provider, request, latencyMs, error);
+                    sendCallLog(exchange, provider, latencyMs, error);
                 });
     }
 
     /** 埋点：请求计数 + 延迟 + token 消耗 */
     private void recordMetrics(ServerWebExchange exchange, String provider,
-                               LlmRequest request, long latencyMs) {
+                               LlmRequest request, long latencyMs, Throwable error) {
         try {
             HttpStatus status = resolveStatus(exchange);
-            String statusName = status != null ? status.name() : "unknown";
+            String statusName = error != null
+                    ? "UPSTREAM_ERROR"
+                    : status != null ? status.name() : HttpStatus.OK.name();
             customMetrics.recordRequest(provider,
                     request != null ? request.getModel() : "unknown", statusName);
             customMetrics.recordLatency(provider, latencyMs);
@@ -168,13 +213,14 @@ public class RouterFilter implements GlobalFilter, Ordered {
     }
 
     /** 构建调用日志（fire-and-forget 发 MQ，失败不影响主流程） */
-    private void sendCallLog(ServerWebExchange exchange, String provider, long latencyMs) {
+    private void sendCallLog(ServerWebExchange exchange, String provider,
+                             long latencyMs, Throwable error) {
         try {
             CallLog callLog = new CallLog();
             callLog.setRequestId(exchange.getAttribute("requestId"));
             callLog.setAppKey(exchange.getAttribute("appKey"));
             callLog.setProvider(provider);
-            LlmRequest request = exchange.getAttribute("llmRequest");
+            LlmRequest request = exchange.getAttribute(LlmRequestContextFilter.LLM_REQUEST_ATTR);
             if (request != null) {
                 callLog.setModel(request.getModel());
             }
@@ -183,9 +229,10 @@ public class RouterFilter implements GlobalFilter, Ordered {
             callLog.setLatencyMs((int) latencyMs);
 
             HttpStatus status = resolveStatus(exchange);
-            boolean success = status != null && status.is2xxSuccessful();
+            boolean success = error == null && (status == null || status.is2xxSuccessful());
             callLog.setStatus(success ? "success" : "fail");
-            callLog.setErrorMessage(success ? null : String.valueOf(status));
+            callLog.setErrorMessage(success ? null
+                    : error != null ? error.getMessage() : String.valueOf(status));
             callLog.setCreatedAt(LocalDateTime.now());
 
             logProducer.sendLog(callLog);
@@ -205,6 +252,7 @@ public class RouterFilter implements GlobalFilter, Ordered {
         return llmProperties.getProviders().stream()
                 .filter(ProviderConfig::isEnabled)
                 .filter(ProviderConfig::isRoutingEnabled)
+                .filter(p -> p.getName() != null && !p.getName().isBlank())
                 .filter(p -> p.getBaseUrl() != null && !p.getBaseUrl().isBlank())
                 .toList();
     }
@@ -212,6 +260,60 @@ public class RouterFilter implements GlobalFilter, Ordered {
     private String resolveStrategy(ServerWebExchange exchange) {
         String header = exchange.getRequest().getHeaders().getFirst("X-Router-Strategy");
         return header != null ? header : llmProperties.getRouter().getStrategy();
+    }
+
+    private boolean isChatCompletion(ServerWebExchange exchange) {
+        return "POST".equalsIgnoreCase(exchange.getRequest().getMethod().name())
+                && exchange.getRequest().getPath().value().endsWith("/v1/chat/completions");
+    }
+
+    private boolean isLlmApi(ServerWebExchange exchange) {
+        return exchange.getRequest().getPath().value().startsWith("/v1/");
+    }
+
+    private Mono<Void> writeUnknownProviderResponse(ServerWebExchange exchange, String provider) {
+        ServerHttpResponse response = exchange.getResponse();
+        response.setStatusCode(HttpStatus.BAD_REQUEST);
+        response.getHeaders().setContentType(MediaType.APPLICATION_JSON);
+        byte[] body;
+        try {
+            body = objectMapper.writeValueAsBytes(java.util.Map.of(
+                    "error", "Unknown or disabled provider: " + provider));
+        } catch (Exception error) {
+            return response.setComplete();
+        }
+        return response.writeWith(Mono.just(response.bufferFactory().wrap(body)));
+    }
+
+    /** 非聊天接口无法使用 Chat Adapter 降级，返回明确的熔断状态。 */
+    private Mono<Void> writeCircuitOpenResponse(ServerWebExchange exchange) {
+        ServerHttpResponse response = exchange.getResponse();
+        response.setStatusCode(HttpStatus.SERVICE_UNAVAILABLE);
+        response.getHeaders().setContentType(MediaType.APPLICATION_JSON);
+        response.getHeaders().add("X-Circuit-Breaker", "OPEN");
+        byte[] body;
+        try {
+            body = objectMapper.writeValueAsBytes(java.util.Map.of(
+                    "error", "Provider circuit is open and this endpoint has no compatible fallback adapter"));
+        } catch (Exception error) {
+            return response.setComplete();
+        }
+        return response.writeWith(Mono.just(response.bufferFactory().wrap(body)));
+    }
+
+    /** 无法解析的请求不能安全转换后发送给备选 Provider，明确返回客户端错误。 */
+    private Mono<Void> writeInvalidRequestResponse(ServerWebExchange exchange) {
+        ServerHttpResponse response = exchange.getResponse();
+        response.setStatusCode(HttpStatus.BAD_REQUEST);
+        response.getHeaders().setContentType(MediaType.APPLICATION_JSON);
+        byte[] body;
+        try {
+            body = objectMapper.writeValueAsBytes(java.util.Map.of(
+                    "error", "Invalid LLM request body; fallback requires a parseable request"));
+        } catch (Exception error) {
+            return response.setComplete();
+        }
+        return response.writeWith(Mono.just(response.bufferFactory().wrap(body)));
     }
 
     /** 熔断降级响应：带 X-Circuit-Breaker: OPEN 标记 */
@@ -233,6 +335,6 @@ public class RouterFilter implements GlobalFilter, Ordered {
 
     @Override
     public int getOrder() {
-        return Ordered.HIGHEST_PRECEDENCE + 55;
+        return Ordered.HIGHEST_PRECEDENCE + 48;
     }
 }

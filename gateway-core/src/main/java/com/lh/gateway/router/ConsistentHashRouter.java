@@ -9,14 +9,15 @@ import java.nio.ByteBuffer;
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.Collections;
 import java.util.List;
-import java.util.SortedMap;
+import java.util.NavigableMap;
 import java.util.TreeMap;
 
 /**
  * 一致性哈希路由策略
  *
- * <p>同一个 Session（由 requestId 或 appKey 决定）始终路由到同一个 Provider。
+ * <p>同一模型下，相同 AppKey 或 Session 始终路由到同一个 Provider。
  * 适用于保持对话上下文和流式响应缓冲区一致性。</p>
  *
  * <p>每个物理节点有 160 个虚拟节点，Provider 变化时数据迁移最小化。</p>
@@ -29,47 +30,62 @@ public class ConsistentHashRouter implements RouterStrategy {
     private static final int VIRTUAL_NODES = 160;
 
     /** 哈希环 */
-    private final SortedMap<Integer, String> ring = new TreeMap<>();
+    private volatile NavigableMap<Integer, String> ring = Collections.emptyNavigableMap();
 
     /** 上次更新的 Provider 列表（用于检测变化） */
-    private volatile List<ProviderConfig> lastProviders = List.of();
+    private volatile List<String> lastProviderNames = List.of();
 
     @Override
-    public Mono<String> select(List<ProviderConfig> providers, String model) {
+    public Mono<String> select(List<ProviderConfig> providers, RoutingContext context) {
         if (providers == null || providers.isEmpty()) {
             return Mono.error(new IllegalStateException("No available providers"));
         }
 
-        // 如果 Provider 列表变了，重建哈希环
-        if (!providers.equals(lastProviders)) {
-            rebuildRing(providers);
-            lastProviders = List.copyOf(providers);
-        }
+        ensureRing(providers);
 
-        // 用 model + appKey（如果有）作为路由 Key
-        String routeKey = model;
+        // 模型 + 租户 + 会话构成稳定 Key；缺少租户/会话时才退化到 requestId。
+        String routeKey = context != null
+                ? context.consistentHashKey()
+                : new RoutingContext(null, null, null, null).consistentHashKey();
         int hash = hash(routeKey);
 
         // 找到最近的顺时针节点
-        SortedMap<Integer, String> tailMap = ring.tailMap(hash);
-        Integer nodeHash = tailMap.isEmpty() ? ring.firstKey() : tailMap.firstKey();
-        String selected = ring.get(nodeHash);
+        NavigableMap<Integer, String> currentRing = ring;
+        var entry = currentRing.ceilingEntry(hash);
+        String selected = entry != null
+                ? entry.getValue()
+                : currentRing.firstEntry().getValue();
 
         log.debug("ConsistentHash selected: {} (hash={})", selected, hash);
         return Mono.just(selected);
     }
 
-    private void rebuildRing(List<ProviderConfig> providers) {
-        ring.clear();
+    private void ensureRing(List<ProviderConfig> providers) {
+        List<String> providerNames = providers.stream().map(ProviderConfig::getName).toList();
+        if (providerNames.equals(lastProviderNames)) {
+            return;
+        }
+        synchronized (this) {
+            if (providerNames.equals(lastProviderNames)) {
+                return;
+            }
+            ring = rebuildRing(providers);
+            lastProviderNames = List.copyOf(providerNames);
+        }
+    }
+
+    private NavigableMap<Integer, String> rebuildRing(List<ProviderConfig> providers) {
+        NavigableMap<Integer, String> newRing = new TreeMap<>();
         for (ProviderConfig provider : providers) {
             for (int i = 0; i < VIRTUAL_NODES; i++) {
                 String virtualNode = provider.getName() + "#" + i;
                 int hash = hash(virtualNode);
-                ring.put(hash, provider.getName());
+                newRing.put(hash, provider.getName());
             }
         }
         log.debug("Consistent hash ring rebuilt: {} providers, {} virtual nodes",
                 providers.size(), providers.size() * VIRTUAL_NODES);
+        return Collections.unmodifiableNavigableMap(newRing);
     }
 
     private int hash(String key) {

@@ -141,6 +141,7 @@ public class FallbackHandler {
         copy.setMessages(source.getMessages());
         copy.setTemperature(source.getTemperature());
         copy.setMaxTokens(source.getMaxTokens());
+        copy.setUser(source.getUser());
         copy.setTools(source.getTools());
         copy.setToolChoice(source.getToolChoice());
         copy.setStream(false);

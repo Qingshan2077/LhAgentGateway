@@ -23,7 +23,7 @@ import java.util.concurrent.atomic.AtomicBoolean;
 @Component
 public class CircuitBreakerResultFilter implements GlobalFilter, Ordered {
 
-    private static final String LLM_CHAT_PATH = "/v1/chat/completions";
+    private static final String LLM_API_PREFIX = "/v1/";
     private final CircuitBreakerFactory breakerFactory;
 
     @Value("${llm.upstream.provider:openai}")
@@ -35,7 +35,7 @@ public class CircuitBreakerResultFilter implements GlobalFilter, Ordered {
 
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
-        if (!exchange.getRequest().getPath().value().endsWith(LLM_CHAT_PATH)) {
+        if (!exchange.getRequest().getPath().value().startsWith(LLM_API_PREFIX)) {
             return chain.filter(exchange);
         }
 
@@ -44,8 +44,11 @@ public class CircuitBreakerResultFilter implements GlobalFilter, Ordered {
         return chain.filter(exchange)
                 .doOnSuccess(ignored -> {
                     var status = exchange.getResponse().getStatusCode();
-                    // WebFlux 未显式设置状态码时按默认 200 处理；异常路径由 doOnError 记录失败。
-                    record(provider, status == null || status.is2xxSuccessful(), recorded);
+                    // 4xx 属于调用方请求问题，说明 Provider 仍可达，不能污染 Provider 故障率。
+                    // 429 表示供应商不可承载当前流量，仍按失败计入熔断窗口。
+                    boolean providerHealthy = status == null
+                            || (!status.is5xxServerError() && status.value() != 429);
+                    record(provider, providerHealthy, recorded);
                 })
                 .doOnError(error -> {
                     record(provider, false, recorded);

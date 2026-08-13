@@ -16,8 +16,8 @@ public interface RouterStrategy {
 
     /**
      * @param providers 当前可用 Provider 列表
-     * @param model     请求的目标模型名
+     * @param context   路由上下文（模型、租户、会话和请求标识）
      * @return 选中的 Provider 名称
      */
-    Mono<String> select(List<ProviderConfig> providers, String model);
+    Mono<String> select(List<ProviderConfig> providers, RoutingContext context);
 }

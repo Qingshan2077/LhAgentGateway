@@ -27,7 +27,7 @@ public class LeastLatencyRouter implements RouterStrategy {
     private static final int WINDOW_SIZE = 10;
 
     @Override
-    public Mono<String> select(List<ProviderConfig> providers, String model) {
+    public Mono<String> select(List<ProviderConfig> providers, RoutingContext context) {
         if (providers == null || providers.isEmpty()) {
             return Mono.error(new IllegalStateException("No available providers"));
         }

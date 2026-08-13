@@ -19,6 +19,7 @@ public class LlmRequest {
     @JsonAlias("maxTokens")
     private Integer maxTokens;
     private Boolean stream;
+    private String user;
     private List<FunctionTool> tools;
     @JsonProperty("tool_choice")
     @JsonAlias("toolChoice")
@@ -34,6 +35,8 @@ public class LlmRequest {
     public void setMaxTokens(Integer maxTokens) { this.maxTokens = maxTokens; }
     public Boolean getStream() { return stream; }
     public void setStream(Boolean stream) { this.stream = stream; }
+    public String getUser() { return user; }
+    public void setUser(String user) { this.user = user; }
     public List<FunctionTool> getTools() { return tools; }
     public void setTools(List<FunctionTool> tools) { this.tools = tools; }
     public Object getToolChoice() { return toolChoice; }
