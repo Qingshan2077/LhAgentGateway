@@ -1,33 +1,56 @@
 package com.lh.gateway.cache;
 
-import com.lh.gateway.model.LlmRequest;
+import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.databind.SerializationFeature;
 import org.springframework.stereotype.Component;
 
 import java.nio.charset.StandardCharsets;
 import java.security.MessageDigest;
+import java.util.Locale;
 
 @Component("llmCacheKeyGenerator")
 public class CacheKeyGenerator {
 
-    private static final String PREFIX = "llm:";
+    /** 修改 Key 结构时升级版本，避免误读旧格式缓存。 */
+    private static final String PREFIX = "v2:";
+    private final ObjectMapper objectMapper;
 
-    public String generateKey(LlmRequest request) {
-        String content = buildContent(request);
-        return PREFIX + sha256(content);
+    public CacheKeyGenerator(ObjectMapper objectMapper) {
+        this.objectMapper = objectMapper;
     }
 
-    private String buildContent(LlmRequest request) {
-        var sb = new StringBuilder();
-        sb.append("model=").append(request.getModel()).append("|");
-        sb.append("stream=").append(request.getStream()).append("|");
-        if (request.getTemperature() != null) sb.append("temp=").append(request.getTemperature()).append("|");
-        if (request.getMaxTokens() != null) sb.append("max_tokens=").append(request.getMaxTokens()).append("|");
-        if (request.getMessages() != null) {
-            for (LlmRequest.Message msg : request.getMessages()) {
-                sb.append(msg.getRole()).append(":").append(msg.getContent()).append("|");
-            }
+    /**
+     * 根据租户、真实 Provider 和完整请求 JSON 生成缓存 Key。
+     *
+     * <p>完整 JSON 会先反序列化为通用对象，再按 Map Key 排序后序列化，
+     * 因此 tools、tool_choice、response_format、seed 等当前模型类未显式声明的字段
+     * 也会影响缓存 Key；仅调整 JSON 对象字段顺序不会产生新 Key。</p>
+     */
+    public String generateKey(String requestBody, String provider, String appKey) {
+        String canonicalBody = canonicalizeJson(requestBody);
+        String namespace = "provider=" + normalize(provider)
+                + "|appKey=" + normalize(appKey)
+                + "|body=" + canonicalBody;
+        return PREFIX + sha256(namespace);
+    }
+
+    private String canonicalizeJson(String requestBody) {
+        try {
+            Object json = objectMapper.readValue(requestBody, Object.class);
+            return objectMapper.writer()
+                    .with(SerializationFeature.ORDER_MAP_ENTRIES_BY_KEYS)
+                    .writeValueAsString(json);
+        } catch (Exception e) {
+            // CacheFilter 已完成业务模型解析；这里保留原文兜底，避免缓存功能影响主链路。
+            return requestBody;
         }
-        return sb.toString();
+    }
+
+    private String normalize(String value) {
+        if (value == null || value.isBlank()) {
+            return "unknown";
+        }
+        return value.trim().toLowerCase(Locale.ROOT);
     }
 
     private String sha256(String input) {

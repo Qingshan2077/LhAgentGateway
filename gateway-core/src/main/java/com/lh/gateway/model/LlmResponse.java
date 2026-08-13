@@ -1,10 +1,15 @@
 package com.lh.gateway.model;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 import java.util.List;
 
 /**
  * 统一的 LLM 调用响应体
  */
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class LlmResponse {
     private String id;
     private String object;
@@ -26,9 +31,12 @@ public class LlmResponse {
     public Usage getUsage() { return usage; }
     public void setUsage(Usage usage) { this.usage = usage; }
 
+    @JsonIgnoreProperties(ignoreUnknown = true)
     public static class Choice {
         private Integer index;
         private LlmRequest.Message message;
+        @JsonProperty("finish_reason")
+        @JsonAlias("finishReason")
         private String finishReason;
 
         public Integer getIndex() { return index; }
@@ -39,9 +47,16 @@ public class LlmResponse {
         public void setFinishReason(String finishReason) { this.finishReason = finishReason; }
     }
 
+    @JsonIgnoreProperties(ignoreUnknown = true)
     public static class Usage {
+        @JsonProperty("prompt_tokens")
+        @JsonAlias("promptTokens")
         private Integer promptTokens;
+        @JsonProperty("completion_tokens")
+        @JsonAlias("completionTokens")
         private Integer completionTokens;
+        @JsonProperty("total_tokens")
+        @JsonAlias("totalTokens")
         private Integer totalTokens;
 
         public Integer getPromptTokens() { return promptTokens; }

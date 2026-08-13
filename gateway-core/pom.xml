@@ -85,13 +85,6 @@
             <version>3.1.8</version>
         </dependency>
 
-        <!-- Guava 布隆过滤器 -->
-        <dependency>
-            <groupId>com.google.guava</groupId>
-            <artifactId>guava</artifactId>
-            <version>33.2.0-jre</version>
-        </dependency>
-
         <!-- Jackson JSON -->
         <dependency>
             <groupId>com.fasterxml.jackson.core</groupId>

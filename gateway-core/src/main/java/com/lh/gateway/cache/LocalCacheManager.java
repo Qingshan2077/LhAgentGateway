@@ -2,7 +2,6 @@ package com.lh.gateway.cache;
 
 import com.github.benmanes.caffeine.cache.Cache;
 import com.github.benmanes.caffeine.cache.Caffeine;
-import com.lh.gateway.model.LlmResponse;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.stereotype.Component;
@@ -14,7 +13,7 @@ import java.util.concurrent.TimeUnit;
 public class LocalCacheManager {
 
     private static final Logger log = LoggerFactory.getLogger(LocalCacheManager.class);
-    private final Cache<String, LlmResponse> cache;
+    private final Cache<String, String> cache;
 
     public LocalCacheManager() {
         this.cache = Caffeine.newBuilder()
@@ -24,13 +23,13 @@ public class LocalCacheManager {
                 .build();
     }
 
-    public Mono<LlmResponse> get(String key) {
-        LlmResponse value = cache.getIfPresent(key);
+    public Mono<String> get(String key) {
+        String value = cache.getIfPresent(key);
         if (value != null) log.debug("Local cache hit: {}", key);
         return Mono.justOrEmpty(value);
     }
 
-    public void put(String key, LlmResponse value) {
+    public void put(String key, String value) {
         cache.put(key, value);
     }
 

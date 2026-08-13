@@ -1,15 +1,22 @@
 package com.lh.gateway.model;
 
+import com.fasterxml.jackson.annotation.JsonAlias;
+import com.fasterxml.jackson.annotation.JsonIgnoreProperties;
+import com.fasterxml.jackson.annotation.JsonProperty;
+
 import java.util.List;
 import java.util.Map;
 
 /**
  * 统一的 LLM 调用请求体
  */
+@JsonIgnoreProperties(ignoreUnknown = true)
 public class LlmRequest {
     private String model;
     private List<Message> messages;
     private Double temperature;
+    @JsonProperty("max_tokens")
+    @JsonAlias("maxTokens")
     private Integer maxTokens;
     private Boolean stream;
 
@@ -24,6 +31,7 @@ public class LlmRequest {
     public Boolean getStream() { return stream; }
     public void setStream(Boolean stream) { this.stream = stream; }
 
+    @JsonIgnoreProperties(ignoreUnknown = true)
     public static class Message {
         private String role;
         private String content;
@@ -34,6 +42,7 @@ public class LlmRequest {
         public void setContent(String content) { this.content = content; }
     }
 
+    @JsonIgnoreProperties(ignoreUnknown = true)
     public static class FunctionTool {
         private String type;
         private Function function;
@@ -43,6 +52,7 @@ public class LlmRequest {
         public Function getFunction() { return function; }
         public void setFunction(Function function) { this.function = function; }
 
+        @JsonIgnoreProperties(ignoreUnknown = true)
         public static class Function {
             private String name;
             private String description;

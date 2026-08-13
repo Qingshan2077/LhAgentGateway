@@ -59,7 +59,7 @@ public class RouterFilter implements GlobalFilter, Ordered {
     private final LeastLatencyRouter leastLatencyRouter;
     private final LogProducer logProducer;
     private final CustomMetrics customMetrics;
-    private final ObjectMapper objectMapper = new ObjectMapper();
+    private final ObjectMapper objectMapper;
 
     public RouterFilter(LlmProperties llmProperties,
                         RouterFactory routerFactory,
@@ -67,7 +67,8 @@ public class RouterFilter implements GlobalFilter, Ordered {
                         FallbackHandler fallbackHandler,
                         LeastLatencyRouter leastLatencyRouter,
                         LogProducer logProducer,
-                        CustomMetrics customMetrics) {
+                        CustomMetrics customMetrics,
+                        ObjectMapper objectMapper) {
         this.llmProperties = llmProperties;
         this.routerFactory = routerFactory;
         this.breakerFactory = breakerFactory;
@@ -75,6 +76,7 @@ public class RouterFilter implements GlobalFilter, Ordered {
         this.leastLatencyRouter = leastLatencyRouter;
         this.logProducer = logProducer;
         this.customMetrics = customMetrics;
+        this.objectMapper = objectMapper;
     }
 
     @Override
@@ -90,11 +92,19 @@ public class RouterFilter implements GlobalFilter, Ordered {
             return chain.filter(exchange);
         }
 
+        // CacheFilter 已为缓存 Key 提前选择 Provider 时直接复用，避免策略计数器执行两次。
+        String preselectedProvider = exchange.getAttribute(PROVIDER_ATTR);
         // 请求头显式指定 Provider → 优先使用；否则按策略选择
         String headerProvider = exchange.getRequest().getHeaders().getFirst("X-Provider");
-        Mono<String> selection = headerProvider != null
-                ? Mono.just(headerProvider)
-                : routerFactory.getStrategy(resolveStrategy(exchange)).select(providers, request.getModel());
+        Mono<String> selection;
+        if (preselectedProvider != null) {
+            selection = Mono.just(preselectedProvider);
+        } else if (headerProvider != null) {
+            selection = Mono.just(headerProvider);
+        } else {
+            selection = routerFactory.getStrategy(resolveStrategy(exchange))
+                    .select(providers, request.getModel());
+        }
 
         return selection.flatMap(provider -> route(exchange, chain, provider, providers, request));
     }
@@ -102,7 +112,7 @@ public class RouterFilter implements GlobalFilter, Ordered {
     private Mono<Void> route(ServerWebExchange exchange, GatewayFilterChain chain,
                              String provider, List<ProviderConfig> providers, LlmRequest request) {
         ProviderConfig target = providers.stream()
-                .filter(p -> p.getName().equals(provider))
+                .filter(p -> p.getName().equalsIgnoreCase(provider))
                 .findFirst()
                 .orElse(null);
         // 指定了未配置的 Provider：走默认路由
