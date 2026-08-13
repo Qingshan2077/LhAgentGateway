@@ -203,6 +203,8 @@ public class RouterFilter implements GlobalFilter, Ordered {
 
     private List<ProviderConfig> enabledProviders() {
         return llmProperties.getProviders().stream()
+                .filter(ProviderConfig::isEnabled)
+                .filter(ProviderConfig::isRoutingEnabled)
                 .filter(p -> p.getBaseUrl() != null && !p.getBaseUrl().isBlank())
                 .toList();
     }

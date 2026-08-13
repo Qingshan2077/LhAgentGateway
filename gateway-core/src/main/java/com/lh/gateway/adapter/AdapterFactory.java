@@ -1,12 +1,14 @@
 package com.lh.gateway.adapter;
 
+import com.lh.gateway.config.LlmProperties;
+import com.lh.gateway.model.ProviderConfig;
 import jakarta.annotation.PostConstruct;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
-import org.springframework.beans.factory.annotation.Value;
 import org.springframework.stereotype.Component;
 import org.springframework.web.reactive.function.client.WebClient;
 
+import java.util.Locale;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
@@ -17,8 +19,8 @@ import java.util.concurrent.ConcurrentHashMap;
  * 适配器用于熔断降级时的备选 Provider 调用与 30s 健康检查轮询；
  * 主转发链路走 Spring Cloud Gateway 路由直转。</p>
  *
- * <p>各供应商 base-url 可通过 {@code llm.adapter.*.base-url} 配置
- * （压测验证备选切换时指向本地 Mock 即可）。</p>
+ * <p>适配器直接使用 {@code llm.providers} 中的 base-url 与 api-key，
+ * 保证主路由配置和降级调用配置来源一致。</p>
  */
 @Component
 public class AdapterFactory {
@@ -27,24 +29,36 @@ public class AdapterFactory {
 
     private final Map<String, LlmAdapter> adapterMap = new ConcurrentHashMap<>();
     private final WebClient.Builder webClientBuilder;
+    private final LlmProperties llmProperties;
 
-    @Value("${llm.adapter.openai.base-url:https://api.openai.com}")
-    private String openaiBaseUrl;
-    @Value("${llm.adapter.deepseek.base-url:https://api.deepseek.com}")
-    private String deepseekBaseUrl;
-    @Value("${llm.adapter.claude.base-url:https://api.anthropic.com}")
-    private String claudeBaseUrl;
-
-    public AdapterFactory(WebClient.Builder webClientBuilder) {
+    public AdapterFactory(WebClient.Builder webClientBuilder, LlmProperties llmProperties) {
         this.webClientBuilder = webClientBuilder;
+        this.llmProperties = llmProperties;
     }
 
     @PostConstruct
     public void initDefaultAdapters() {
-        register(new OpenAIAdapter(webClientBuilder.baseUrl(openaiBaseUrl).build()));
-        register(new DeepSeekAdapter(webClientBuilder.baseUrl(deepseekBaseUrl).build()));
-        register(new ClaudeAdapter(webClientBuilder.baseUrl(claudeBaseUrl).build()));
-        log.info("已注册好的LLM适配: openai, deepseek, claude");
+        llmProperties.getProviders().stream()
+                .filter(ProviderConfig::isEnabled)
+                .filter(config -> config.getName() != null && config.getBaseUrl() != null)
+                .forEach(this::registerConfiguredAdapter);
+        log.info("Registered LLM fallback adapters: {}", adapterMap.keySet());
+    }
+
+    private void registerConfiguredAdapter(ProviderConfig config) {
+        String provider = normalize(config.getName());
+        WebClient webClient = webClientBuilder.clone().baseUrl(config.getBaseUrl()).build();
+        LlmAdapter adapter = switch (provider) {
+            case "openai" -> new OpenAIAdapter(webClient, config.getApiKey());
+            case "deepseek" -> new DeepSeekAdapter(webClient, config.getApiKey());
+            case "claude" -> new ClaudeAdapter(webClient, config.getApiKey());
+            default -> null;
+        };
+        if (adapter == null) {
+            log.warn("No fallback adapter implementation for provider: {}", provider);
+            return;
+        }
+        register(adapter);
     }
 
     public void register(LlmAdapter adapter) {
@@ -52,7 +66,7 @@ public class AdapterFactory {
     }
 
     public LlmAdapter getAdapter(String providerName) {
-        LlmAdapter adapter = adapterMap.get(providerName);
+        LlmAdapter adapter = adapterMap.get(normalize(providerName));
         if (adapter == null) {
             throw new IllegalArgumentException("Unsupported provider: " + providerName);
         }
@@ -60,10 +74,14 @@ public class AdapterFactory {
     }
 
     public boolean supports(String providerName) {
-        return adapterMap.containsKey(providerName);
+        return providerName != null && adapterMap.containsKey(normalize(providerName));
     }
 
     public Map<String, LlmAdapter> getAllAdapters() {
         return Map.copyOf(adapterMap);
+    }
+
+    private String normalize(String providerName) {
+        return providerName.trim().toLowerCase(Locale.ROOT);
     }
 }

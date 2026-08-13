@@ -90,7 +90,29 @@ llm:
     # 压测时把 base-url 指向本地 Mock 即可验证三种路由策略。
     - name: openai
       base-url: ${LLM_PROVIDER_OPENAI_BASE_URL:${LLM_UPSTREAM_URI:https://api.openai.com}}
+      api-key: ${LLM_PROVIDER_OPENAI_API_KEY:}
       weight: 3
+      enabled: true
+      routing-enabled: true
+      models:
+        "*":
+          name: ${LLM_PROVIDER_OPENAI_FALLBACK_MODEL:gpt-4o-mini}
     - name: deepseek
       base-url: ${LLM_PROVIDER_DEEPSEEK_BASE_URL:${LLM_ADAPTER_DEEPSEEK_BASE_URL:https://api.deepseek.com}}
+      api-key: ${LLM_PROVIDER_DEEPSEEK_API_KEY:}
       weight: 1
+      enabled: true
+      routing-enabled: true
+      models:
+        "*":
+          name: ${LLM_PROVIDER_DEEPSEEK_FALLBACK_MODEL:deepseek-chat}
+    - name: claude
+      base-url: ${LLM_PROVIDER_CLAUDE_BASE_URL:${LLM_ADAPTER_CLAUDE_BASE_URL:https://api.anthropic.com}}
+      api-key: ${LLM_PROVIDER_CLAUDE_API_KEY:}
+      weight: 1
+      enabled: true
+      # Anthropic Messages API 需要协议转换，仅作为 Adapter 降级候选，不走 OpenAI 兼容直转。
+      routing-enabled: false
+      models:
+        "*":
+          name: ${LLM_PROVIDER_CLAUDE_FALLBACK_MODEL:claude-3-5-haiku-latest}

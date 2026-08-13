@@ -3,7 +3,6 @@ package com.lh.gateway.gateway.filter;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.lh.gateway.cache.CacheKeyGenerator;
 import com.lh.gateway.cache.MultiLevelCacheManager;
-import com.lh.gateway.circuitbreaker.CircuitBreakerFactory;
 import com.lh.gateway.config.LlmProperties;
 import com.lh.gateway.model.LlmRequest;
 import com.lh.gateway.model.LlmResponse;
@@ -39,9 +38,7 @@ import java.util.Locale;
  * （本地 Caffeine → Redis Bitmap 布隆过滤器 → Redis 数据），
  * 命中直接返回；未命中转发上游，并在响应完成后把结果写回缓存（布隆 + Redis + 本地）。</p>
  *
- * <p>熔断配合：转发完成后把调用结果回喂熔断器
- * （{@link com.lh.gateway.circuitbreaker.ProviderCircuitBreaker#recordResult}），
- * 驱动滑动窗口错误率统计；熔断拦截与备选 Provider 降级在 {@link RouterFilter} 中完成。</p>
+ * <p>熔断结果统计由独立的 {@link CircuitBreakerResultFilter} 完成，避免熔断能力依赖缓存开关。</p>
  *
  * <p>只缓存非流式请求（stream=false）的 2xx 响应。缓存命中响应带 {@code X-Cache: HIT} 头，
  * 熔断降级响应带 {@code X-Circuit-Breaker: OPEN} 头。</p>
@@ -59,7 +56,6 @@ public class CacheFilter implements GlobalFilter, Ordered {
 
     private final MultiLevelCacheManager cacheManager;
     private final CacheKeyGenerator keyGenerator;
-    private final CircuitBreakerFactory breakerFactory;
     private final CustomMetrics customMetrics;
     private final LlmProperties llmProperties;
     private final RouterFactory routerFactory;
@@ -76,14 +72,12 @@ public class CacheFilter implements GlobalFilter, Ordered {
 
     public CacheFilter(MultiLevelCacheManager cacheManager,
                        CacheKeyGenerator keyGenerator,
-                       CircuitBreakerFactory breakerFactory,
                        CustomMetrics customMetrics,
                        LlmProperties llmProperties,
                        RouterFactory routerFactory,
                        ObjectMapper objectMapper) {
         this.cacheManager = cacheManager;
         this.keyGenerator = keyGenerator;
-        this.breakerFactory = breakerFactory;
         this.customMetrics = customMetrics;
         this.llmProperties = llmProperties;
         this.routerFactory = routerFactory;
@@ -92,9 +86,9 @@ public class CacheFilter implements GlobalFilter, Ordered {
 
     @Override
     public Mono<Void> filter(ServerWebExchange exchange, GatewayFilterChain chain) {
-        // 缓存关闭或非 LLM 接口：直接放行
-        if (!cacheEnabled
-                || !"POST".equalsIgnoreCase(exchange.getRequest().getMethod().name())
+        // 非 LLM 接口直接放行。LLM 请求即使关闭缓存也需要解析并重建 body，
+        // 让后续 RouterFilter 能执行 Provider 选择、熔断检查和自动降级。
+        if (!"POST".equalsIgnoreCase(exchange.getRequest().getMethod().name())
                 || !exchange.getRequest().getURI().getPath().contains("/v1/chat/completions")) {
             return chain.filter(exchange);
         }
@@ -108,13 +102,18 @@ public class CacheFilter implements GlobalFilter, Ordered {
                     String body = new String(bytes, StandardCharsets.UTF_8);
 
                     LlmRequest request = parseRequest(body);
-                    // 解析失败或流式请求：不缓存，重建 body 后放行
-                    if (request == null || Boolean.TRUE.equals(request.getStream())) {
+                    // 解析失败时无法进行模型路由，重建 body 后按原链路放行。
+                    if (request == null) {
                         return chain.filter(mutateExchange(exchange, bytes, exchange.getResponse()));
                     }
 
-                    // 供后续过滤器（路由选择/熔断降级/日志）使用
+                    // 供后续过滤器（路由选择/熔断降级/日志）使用；不能依赖缓存开关。
                     exchange.getAttributes().put("llmRequest", request);
+
+                    // 缓存关闭或流式响应只跳过缓存，仍进入 RouterFilter 和熔断结果过滤器。
+                    if (!cacheEnabled || Boolean.TRUE.equals(request.getStream())) {
+                        return chain.filter(mutateExchange(exchange, bytes, exchange.getResponse()));
+                    }
 
                     // 缓存 Key 必须包含本次真实路由 Provider。这里提前选择并写入 attribute，
                     // RouterFilter 在缓存未命中时复用该结果，避免加权轮询被选择两次。
@@ -180,6 +179,8 @@ public class CacheFilter implements GlobalFilter, Ordered {
 
     private List<ProviderConfig> configuredProviders() {
         return llmProperties.getProviders().stream()
+                .filter(ProviderConfig::isEnabled)
+                .filter(ProviderConfig::isRoutingEnabled)
                 .filter(p -> hasText(p.getName()) && hasText(p.getBaseUrl()))
                 .toList();
     }
@@ -198,8 +199,7 @@ public class CacheFilter implements GlobalFilter, Ordered {
 
     /**
      * 转发上游，并用响应装饰器截获响应体：
-     * 2xx 时异步写缓存；调用结果回喂熔断器（驱动滑动窗口错误率统计）。
-     * Provider 取自路由选择（RouterFilter 写入的 attribute）或 X-Provider 头。
+     * 2xx 时异步写缓存。
      * 缓存写失败不影响主响应（异步订阅 + 仅告警日志）。
      */
     private Mono<Void> forwardAndCache(ServerWebExchange exchange, GatewayFilterChain chain,
@@ -212,11 +212,6 @@ public class CacheFilter implements GlobalFilter, Ordered {
                     byte[] responseBytes = mergeBuffers(dataBuffers);
                     if (getStatusCode() != null) {
                         boolean success = getStatusCode().is2xxSuccessful();
-                        String provider = resolveProvider(exchange);
-                        if (provider != null) {
-                            breakerFactory.getBreaker(provider).recordResult(success);
-                            log.debug("Record result for provider={}, success={}", provider, success);
-                        }
                         if (success) {
                             storeUsage(exchange, responseBytes);
                             cacheResponseAsync(cacheKey, responseBytes);
@@ -229,19 +224,6 @@ public class CacheFilter implements GlobalFilter, Ordered {
             }
         };
         return chain.filter(mutateExchange(exchange, requestBody, decorator));
-    }
-
-    /** 取当前请求的 Provider：路由选择优先，其次 X-Provider 头 */
-    private String resolveProvider(ServerWebExchange exchange) {
-        String selected = exchange.getAttribute(RouterFilter.PROVIDER_ATTR);
-        if (hasText(selected)) {
-            return normalizeProvider(selected);
-        }
-        String requested = exchange.getRequest().getHeaders().getFirst("X-Provider");
-        if (hasText(requested)) {
-            return normalizeProvider(requested);
-        }
-        return normalizedDefaultProvider();
     }
 
     /** 异步写缓存：验证响应体 → 写入布隆 + Redis + 本地缓存 */

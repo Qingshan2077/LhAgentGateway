@@ -62,7 +62,8 @@ public class ProviderCircuitBreaker {
                 // 检查是否到达半开恢复时间
                 if (System.currentTimeMillis() - openedAt.get() >= OPEN_TIMEOUT_MS) {
                     if (state.compareAndSet(CircuitBreakerState.OPEN, CircuitBreakerState.HALF_OPEN)) {
-                        halfOpenCalls.set(0);
+                        // 当前请求本身就是第一个半开试探，必须计入最多 3 次的配额。
+                        halfOpenCalls.set(1);
                         halfOpenSuccesses.set(0);
                         log.info("Circuit breaker {} transitions to HALF_OPEN", providerName);
                         yield true;

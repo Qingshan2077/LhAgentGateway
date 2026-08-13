@@ -4,6 +4,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Component;
 
 import java.util.Map;
+import java.util.Locale;
 import java.util.concurrent.ConcurrentHashMap;
 
 /**
@@ -21,7 +22,8 @@ public class CircuitBreakerFactory {
      * 获取或创建 Provider 的熔断器
      */
     public ProviderCircuitBreaker getBreaker(String providerName) {
-        return breakers.computeIfAbsent(providerName, name -> {
+        String normalizedName = normalize(providerName);
+        return breakers.computeIfAbsent(normalizedName, name -> {
             log.info("Creating circuit breaker for provider: {}", name);
             return new ProviderCircuitBreaker(name);
         });
@@ -40,10 +42,18 @@ public class CircuitBreakerFactory {
      * 重置某个 Provider 的熔断器（管理后台操作）
      */
     public void reset(String providerName) {
-        ProviderCircuitBreaker breaker = breakers.get(providerName);
+        String normalizedName = normalize(providerName);
+        ProviderCircuitBreaker breaker = breakers.get(normalizedName);
         if (breaker != null) {
             breaker.reset();
-            log.info("Circuit breaker reset for provider: {}", providerName);
+            log.info("Circuit breaker reset for provider: {}", normalizedName);
         }
+    }
+
+    private String normalize(String providerName) {
+        if (providerName == null || providerName.isBlank()) {
+            return "unknown";
+        }
+        return providerName.trim().toLowerCase(Locale.ROOT);
     }
 }
