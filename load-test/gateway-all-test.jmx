@@ -1,0 +1,1778 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<jmeterTestPlan version="1.2" properties="5.0" jmeter="5.6.3">
+  <hashTree>
+    <TestPlan guiclass="TestPlanGui" testclass="TestPlan" testname="LH Agent Gateway - 全部 API 与多级缓存测试">
+      <stringProp name="TestPlan.comments">
+统一测试计划（JMeter 5.6.3，无第三方插件）：
+
+  -Jscenario=functional          全部接口功能测试（默认）
+  -Jscenario=cache-l1            Caffeine L1 热点缓存压测
+  -Jscenario=cache-l2            Redis L2 缓存压测（预热 -&gt; 等待 L1 过期 -&gt; 一次性 Key 池）
+  -Jscenario=cache-mixed         80% L1 + 15% L2 + 5% MISS 混合压测
+  -Jscenario=cache-penetration   全部唯一 Key / Bloom 负查询压测
+  -Jscenario=all                 串行执行以上全部场景
+
+重要说明：
+1. 正式压测必须以非 GUI 模式运行，并使用 -l 保存 JTL。
+2. 除限流专项外，启动网关时应调高 Global/AppKey 限流，并把测试 Provider 的 rateLimitRpm
+   调整到目标 QPS * 60 * 2 以上，否则测试到的是 429，而不是缓存容量。
+3. L1 默认压测 50 秒，保持在本地缓存 60 秒 TTL 内；L2 默认预热 25000 个 Key、等待 65 秒、
+   压测 60 秒。Redis TTL 必须覆盖整个预热、等待和压测周期。
+4. 功能测试会创建名为 jmeter-test-provider 的临时 Provider，并在结束前删除。
+5. Mock Provider 应支持 /v1/chat/completions、/v1/models、流式响应及标准 4xx/5xx；正式压测时
+   Mock 应运行在独立进程或独立机器。
+6. 该文件不包含 GUI Listener，避免监听器影响吞吐量和 P99。
+      </stringProp>
+      <boolProp name="TestPlan.serialize_threadgroups">true</boolProp>
+      <boolProp name="TestPlan.tearDown_on_shutdown">true</boolProp>
+      <elementProp name="TestPlan.user_defined_variables" elementType="Arguments" guiclass="ArgumentsPanel" testclass="Arguments" testname="测试参数">
+        <collectionProp name="Arguments.arguments">
+          <elementProp name="GW_HOST" elementType="Argument">
+            <stringProp name="Argument.name">GW_HOST</stringProp>
+            <stringProp name="Argument.value">${__P(gw_host,localhost)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="GW_PORT" elementType="Argument">
+            <stringProp name="Argument.name">GW_PORT</stringProp>
+            <stringProp name="Argument.value">${__P(gw_port,8885)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="ADMIN_HOST" elementType="Argument">
+            <stringProp name="Argument.name">ADMIN_HOST</stringProp>
+            <stringProp name="Argument.value">${__P(admin_host,localhost)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="ADMIN_PORT" elementType="Argument">
+            <stringProp name="Argument.name">ADMIN_PORT</stringProp>
+            <stringProp name="Argument.value">${__P(admin_port,8081)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="API_KEY" elementType="Argument">
+            <stringProp name="Argument.name">API_KEY</stringProp>
+            <stringProp name="Argument.value">${__P(api_key,jmeter-app-a)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="SECOND_API_KEY" elementType="Argument">
+            <stringProp name="Argument.name">SECOND_API_KEY</stringProp>
+            <stringProp name="Argument.value">${__P(second_api_key,jmeter-app-b)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="PRIMARY_PROVIDER" elementType="Argument">
+            <stringProp name="Argument.name">PRIMARY_PROVIDER</stringProp>
+            <stringProp name="Argument.value">${__P(primary_provider,openai)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="TEST_PROVIDER" elementType="Argument">
+            <stringProp name="Argument.name">TEST_PROVIDER</stringProp>
+            <stringProp name="Argument.value">${__P(test_provider,jmeter-test-provider)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="MOCK_BASE_URL" elementType="Argument">
+            <stringProp name="Argument.name">MOCK_BASE_URL</stringProp>
+            <stringProp name="Argument.value">${__P(mock_base_url,http://localhost:9999)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+          <elementProp name="CACHE_NAMESPACE" elementType="Argument">
+            <stringProp name="Argument.name">CACHE_NAMESPACE</stringProp>
+            <stringProp name="Argument.value">${__P(cache_namespace,jmeter-cache-v2)}</stringProp>
+            <stringProp name="Argument.metadata">=</stringProp>
+          </elementProp>
+        </collectionProp>
+      </elementProp>
+    </TestPlan>
+    <hashTree>
+      <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="全局 Content-Type 请求头">
+        <collectionProp name="HeaderManager.headers">
+          <elementProp name="" elementType="Header">
+            <stringProp name="Header.name">Content-Type</stringProp>
+            <stringProp name="Header.value">application/json</stringProp>
+          </elementProp>
+        </collectionProp>
+      </HeaderManager>
+      <hashTree/>
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="01 - 全部 API 功能测试">
+        <intProp name="ThreadGroup.num_threads">1</intProp>
+        <intProp name="ThreadGroup.ramp_time">1</intProp>
+        <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController" testname="循环控制器">
+          <stringProp name="LoopController.loops">1</stringProp>
+          <boolProp name="LoopController.continue_forever">false</boolProp>
+        </elementProp>
+      </ThreadGroup>
+      <hashTree>
+        <IfController guiclass="IfControllerPanel" testclass="IfController" testname="当 scenario=functional|all 时运行">
+          <stringProp name="IfController.condition">${__groovy([&apos;functional&apos;\,&apos;all&apos;].contains(props.get(&apos;scenario&apos;\,&apos;functional&apos;)))}</stringProp>
+          <boolProp name="IfController.evaluateAll">false</boolProp>
+          <boolProp name="IfController.useExpression">true</boolProp>
+        </IfController>
+        <hashTree>
+          <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler" testname="初始化功能测试变量">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">
+import java.time.LocalDateTime
+import java.time.format.DateTimeFormatter
+
+def now = LocalDateTime.now()
+def formatter = DateTimeFormatter.ofPattern(&quot;yyyy-MM-dd&apos;T&apos;HH:mm:ss&quot;)
+vars.put(&apos;RUN_ID&apos;, String.valueOf(System.currentTimeMillis()))
+vars.put(&apos;START_TIME&apos;, now.minusDays(7).format(formatter))
+vars.put(&apos;END_TIME&apos;, now.plusMinutes(5).format(formatter))
+SampleResult.setResponseCode(&apos;200&apos;)
+SampleResult.setResponseMessage(&apos;Functional variables initialized&apos;)
+SampleResult.setSuccessful(true)
+            </stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223Sampler>
+          <hashTree/>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="网关：健康检查">
+            <stringProp name="HTTPSampler.domain">${GW_HOST}</stringProp>
+            <stringProp name="HTTPSampler.port">${GW_PORT}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/actuator/health</stringProp>
+            <stringProp name="HTTPSampler.method">GET</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="用户定义的变量">
+              <collectionProp name="Arguments.arguments"/>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree/>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="网关：信息查询" enabled="true">
+            <stringProp name="HTTPSampler.domain">${GW_HOST}</stringProp>
+            <stringProp name="HTTPSampler.port">${GW_PORT}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/actuator/info</stringProp>
+            <stringProp name="HTTPSampler.method">GET</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+              <collectionProp name="Arguments.arguments"/>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree/>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="网关：Prometheus 指标" enabled="true">
+            <stringProp name="HTTPSampler.domain">${GW_HOST}</stringProp>
+            <stringProp name="HTTPSampler.port">${GW_PORT}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/actuator/prometheus</stringProp>
+            <stringProp name="HTTPSampler.method">GET</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+              <collectionProp name="Arguments.arguments"/>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree/>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="网关：聊天请求缺少 API 密钥" enabled="true">
+            <stringProp name="HTTPSampler.domain">${GW_HOST}</stringProp>
+            <stringProp name="HTTPSampler.port">${GW_PORT}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/v1/chat/completions</stringProp>
+            <stringProp name="HTTPSampler.method">POST</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+              <collectionProp name="Arguments.arguments">
+                <elementProp name="" elementType="HTTPArgument">
+                  <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                  <stringProp name="Argument.value">{&quot;model&quot;:&quot;mock-model&quot;,&quot;messages&quot;:[{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;unauthorized-${RUN_ID}&quot;}],&quot;stream&quot;:false}</stringProp>
+                  <stringProp name="Argument.metadata">=</stringProp>
+                </elementProp>
+              </collectionProp>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree/>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="管理端：创建供应商（PUT）" enabled="true">
+            <stringProp name="HTTPSampler.domain">${ADMIN_HOST}</stringProp>
+            <stringProp name="HTTPSampler.port">${ADMIN_PORT}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/api/admin/providers/${TEST_PROVIDER}</stringProp>
+            <stringProp name="HTTPSampler.method">PUT</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+              <collectionProp name="Arguments.arguments">
+                <elementProp name="" elementType="HTTPArgument">
+                  <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                  <stringProp name="Argument.value">{&quot;name&quot;:&quot;${TEST_PROVIDER}&quot;,&quot;displayName&quot;:&quot;JMeter Test Provider&quot;,&quot;baseUrl&quot;:&quot;${MOCK_BASE_URL}&quot;,&quot;apiKey&quot;:&quot;&quot;,&quot;weight&quot;:2,&quot;enabled&quot;:true,&quot;routingEnabled&quot;:true,&quot;rateLimitRpm&quot;:120000,&quot;rateLimitTpm&quot;:1000000}</stringProp>
+                  <stringProp name="Argument.metadata">=</stringProp>
+                </elementProp>
+              </collectionProp>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree/>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="管理端：查询供应商（GET）" enabled="true">
+            <stringProp name="HTTPSampler.domain">${ADMIN_HOST}</stringProp>
+            <stringProp name="HTTPSampler.port">${ADMIN_PORT}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/api/admin/providers/${TEST_PROVIDER}</stringProp>
+            <stringProp name="HTTPSampler.method">GET</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+              <collectionProp name="Arguments.arguments"/>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree/>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="管理端：查询供应商列表（GET）">
+            <stringProp name="HTTPSampler.domain">${ADMIN_HOST}</stringProp>
+            <stringProp name="HTTPSampler.port">${ADMIN_PORT}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/api/admin/providers</stringProp>
+            <stringProp name="HTTPSampler.method">GET</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="用户定义的变量">
+              <collectionProp name="Arguments.arguments"/>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree/>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="管理端：更新供应商（PUT）" enabled="true">
+            <stringProp name="HTTPSampler.domain">${ADMIN_HOST}</stringProp>
+            <stringProp name="HTTPSampler.port">${ADMIN_PORT}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/api/admin/providers/${TEST_PROVIDER}</stringProp>
+            <stringProp name="HTTPSampler.method">PUT</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+              <collectionProp name="Arguments.arguments">
+                <elementProp name="" elementType="HTTPArgument">
+                  <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                  <stringProp name="Argument.value">{&quot;name&quot;:&quot;ignored-path-name&quot;,&quot;displayName&quot;:&quot;JMeter Test Provider Updated&quot;,&quot;baseUrl&quot;:&quot;${MOCK_BASE_URL}&quot;,&quot;apiKey&quot;:&quot;&quot;,&quot;weight&quot;:4,&quot;enabled&quot;:true,&quot;routingEnabled&quot;:true,&quot;rateLimitRpm&quot;:120000,&quot;rateLimitTpm&quot;:1000000}</stringProp>
+                  <stringProp name="Argument.metadata">=</stringProp>
+                </elementProp>
+              </collectionProp>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree/>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="管理端：查询 PUT 更新后的供应商" enabled="true">
+            <stringProp name="HTTPSampler.domain">${ADMIN_HOST}</stringProp>
+            <stringProp name="HTTPSampler.port">${ADMIN_PORT}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/api/admin/providers/${TEST_PROVIDER}</stringProp>
+            <stringProp name="HTTPSampler.method">GET</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+              <collectionProp name="Arguments.arguments"/>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree/>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="管理端：更新供应商权重（PATCH）" enabled="true">
+            <stringProp name="HTTPSampler.domain">${ADMIN_HOST}</stringProp>
+            <stringProp name="HTTPSampler.port">${ADMIN_PORT}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/api/admin/providers/${TEST_PROVIDER}/weight?weight=7</stringProp>
+            <stringProp name="HTTPSampler.method">PATCH</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+              <collectionProp name="Arguments.arguments"/>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree/>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="管理端：查询权重更新后的供应商" enabled="true">
+            <stringProp name="HTTPSampler.domain">${ADMIN_HOST}</stringProp>
+            <stringProp name="HTTPSampler.port">${ADMIN_PORT}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/api/admin/providers/${TEST_PROVIDER}</stringProp>
+            <stringProp name="HTTPSampler.method">GET</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+              <collectionProp name="Arguments.arguments"/>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree/>
+          <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler" testname="等待新建供应商配置刷新" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">
+Thread.sleep((props.get(&apos;provider_refresh_wait_ms&apos;,&apos;6000&apos;) as long))
+SampleResult.setResponseCode(&apos;200&apos;)
+SampleResult.setSuccessful(true)
+            </stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223Sampler>
+          <hashTree/>
+          <GenericController guiclass="LogicControllerGui" testclass="GenericController" testname="网关已授权 API 测试"/>
+          <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="网关授权请求头" enabled="true">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">X-Api-Key</stringProp>
+                  <stringProp name="Header.value">${API_KEY}</stringProp>
+                </elementProp>
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">X-Provider</stringProp>
+                  <stringProp name="Header.value">${PRIMARY_PROVIDER}</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
+            <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="网关：聊天补全" enabled="true">
+              <stringProp name="HTTPSampler.domain">${GW_HOST}</stringProp>
+              <stringProp name="HTTPSampler.port">${GW_PORT}</stringProp>
+              <stringProp name="HTTPSampler.protocol">http</stringProp>
+              <stringProp name="HTTPSampler.path">/v1/chat/completions</stringProp>
+              <stringProp name="HTTPSampler.method">POST</stringProp>
+              <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+              <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+              <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+                <collectionProp name="Arguments.arguments">
+                  <elementProp name="" elementType="HTTPArgument">
+                    <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                    <stringProp name="Argument.value">{&quot;model&quot;:&quot;mock-model&quot;,&quot;messages&quot;:[{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;functional-${RUN_ID}&quot;}],&quot;temperature&quot;:0.2,&quot;max_tokens&quot;:128,&quot;user&quot;:&quot;user-${RUN_ID}&quot;,&quot;tools&quot;:[{&quot;type&quot;:&quot;function&quot;,&quot;function&quot;:{&quot;name&quot;:&quot;weather&quot;,&quot;description&quot;:&quot;Get weather&quot;,&quot;parameters&quot;:{&quot;type&quot;:&quot;object&quot;,&quot;properties&quot;:{&quot;city&quot;:{&quot;type&quot;:&quot;string&quot;}}}}}],&quot;tool_choice&quot;:&quot;auto&quot;,&quot;response_format&quot;:{&quot;type&quot;:&quot;json_object&quot;},&quot;seed&quot;:42,&quot;stream&quot;:false}</stringProp>
+                    <stringProp name="Argument.metadata">=</stringProp>
+                  </elementProp>
+                </collectionProp>
+              </elementProp>
+            </HTTPSamplerProxy>
+            <hashTree/>
+            <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="网关：聊天请求包含无效 JSON" enabled="true">
+              <stringProp name="HTTPSampler.domain">${GW_HOST}</stringProp>
+              <stringProp name="HTTPSampler.port">${GW_PORT}</stringProp>
+              <stringProp name="HTTPSampler.protocol">http</stringProp>
+              <stringProp name="HTTPSampler.path">/v1/chat/completions</stringProp>
+              <stringProp name="HTTPSampler.method">POST</stringProp>
+              <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+              <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+              <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+                <collectionProp name="Arguments.arguments">
+                  <elementProp name="" elementType="HTTPArgument">
+                    <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                    <stringProp name="Argument.value">{&quot;model&quot;:&quot;mock-model&quot;,&quot;messages&quot;:[</stringProp>
+                    <stringProp name="Argument.metadata">=</stringProp>
+                  </elementProp>
+                </collectionProp>
+              </elementProp>
+            </HTTPSamplerProxy>
+            <hashTree/>
+            <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="网关：获取模型列表（GET）" enabled="true">
+              <stringProp name="HTTPSampler.domain">${GW_HOST}</stringProp>
+              <stringProp name="HTTPSampler.port">${GW_PORT}</stringProp>
+              <stringProp name="HTTPSampler.protocol">http</stringProp>
+              <stringProp name="HTTPSampler.path">/v1/models?limit=10</stringProp>
+              <stringProp name="HTTPSampler.method">GET</stringProp>
+              <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+              <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+              <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+                <collectionProp name="Arguments.arguments"/>
+              </elementProp>
+            </HTTPSamplerProxy>
+            <hashTree/>
+            <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="网关：访问未知 v1 路径" enabled="true">
+              <stringProp name="HTTPSampler.domain">${GW_HOST}</stringProp>
+              <stringProp name="HTTPSampler.port">${GW_PORT}</stringProp>
+              <stringProp name="HTTPSampler.protocol">http</stringProp>
+              <stringProp name="HTTPSampler.path">/v1/jmeter-not-found</stringProp>
+              <stringProp name="HTTPSampler.method">GET</stringProp>
+              <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+              <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+              <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+                <collectionProp name="Arguments.arguments"/>
+              </elementProp>
+            </HTTPSamplerProxy>
+            <hashTree/>
+            <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="网关：流式请求绕过缓存" enabled="true">
+              <stringProp name="HTTPSampler.domain">${GW_HOST}</stringProp>
+              <stringProp name="HTTPSampler.port">${GW_PORT}</stringProp>
+              <stringProp name="HTTPSampler.protocol">http</stringProp>
+              <stringProp name="HTTPSampler.path">/v1/chat/completions</stringProp>
+              <stringProp name="HTTPSampler.method">POST</stringProp>
+              <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+              <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+              <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+                <collectionProp name="Arguments.arguments">
+                  <elementProp name="" elementType="HTTPArgument">
+                    <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                    <stringProp name="Argument.value">{&quot;model&quot;:&quot;mock-model&quot;,&quot;messages&quot;:[{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;stream-${RUN_ID}&quot;}],&quot;stream&quot;:true}</stringProp>
+                    <stringProp name="Argument.metadata">=</stringProp>
+                  </elementProp>
+                </collectionProp>
+              </elementProp>
+            </HTTPSamplerProxy>
+            <hashTree/>
+            <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="网关：重复流式请求仍绕过缓存" enabled="true">
+              <stringProp name="HTTPSampler.domain">${GW_HOST}</stringProp>
+              <stringProp name="HTTPSampler.port">${GW_PORT}</stringProp>
+              <stringProp name="HTTPSampler.protocol">http</stringProp>
+              <stringProp name="HTTPSampler.path">/v1/chat/completions</stringProp>
+              <stringProp name="HTTPSampler.method">POST</stringProp>
+              <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+              <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+              <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+                <collectionProp name="Arguments.arguments">
+                  <elementProp name="" elementType="HTTPArgument">
+                    <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                    <stringProp name="Argument.value">{&quot;model&quot;:&quot;mock-model&quot;,&quot;messages&quot;:[{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;stream-${RUN_ID}&quot;}],&quot;stream&quot;:true}</stringProp>
+                    <stringProp name="Argument.metadata">=</stringProp>
+                  </elementProp>
+                </collectionProp>
+              </elementProp>
+            </HTTPSamplerProxy>
+            <hashTree/>
+            <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="缓存：功能测试首次未命中" enabled="true">
+              <stringProp name="HTTPSampler.domain">${GW_HOST}</stringProp>
+              <stringProp name="HTTPSampler.port">${GW_PORT}</stringProp>
+              <stringProp name="HTTPSampler.protocol">http</stringProp>
+              <stringProp name="HTTPSampler.path">/v1/chat/completions</stringProp>
+              <stringProp name="HTTPSampler.method">POST</stringProp>
+              <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+              <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+              <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+                <collectionProp name="Arguments.arguments">
+                  <elementProp name="" elementType="HTTPArgument">
+                    <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                    <stringProp name="Argument.value">{&quot;model&quot;:&quot;mock-model&quot;,&quot;messages&quot;:[{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;cache-functional-${RUN_ID}&quot;}],&quot;temperature&quot;:0.1,&quot;stream&quot;:false}</stringProp>
+                    <stringProp name="Argument.metadata">=</stringProp>
+                  </elementProp>
+                </collectionProp>
+              </elementProp>
+            </HTTPSamplerProxy>
+            <hashTree/>
+            <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler" testname="等待缓存异步写入" enabled="true">
+              <stringProp name="cacheKey">true</stringProp>
+              <stringProp name="filename"></stringProp>
+              <stringProp name="parameters"></stringProp>
+              <stringProp name="script">Thread.sleep((props.get(&apos;cache_put_wait_ms&apos;,&apos;1000&apos;) as long)); SampleResult.setResponseCode(&apos;200&apos;); SampleResult.setSuccessful(true)</stringProp>
+              <stringProp name="scriptLanguage">groovy</stringProp>
+            </JSR223Sampler>
+            <hashTree/>
+            <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="缓存：功能测试再次请求命中" enabled="true">
+              <stringProp name="HTTPSampler.domain">${GW_HOST}</stringProp>
+              <stringProp name="HTTPSampler.port">${GW_PORT}</stringProp>
+              <stringProp name="HTTPSampler.protocol">http</stringProp>
+              <stringProp name="HTTPSampler.path">/v1/chat/completions</stringProp>
+              <stringProp name="HTTPSampler.method">POST</stringProp>
+              <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+              <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+              <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+                <collectionProp name="Arguments.arguments">
+                  <elementProp name="" elementType="HTTPArgument">
+                    <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                    <stringProp name="Argument.value">{&quot;model&quot;:&quot;mock-model&quot;,&quot;messages&quot;:[{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;cache-functional-${RUN_ID}&quot;}],&quot;temperature&quot;:0.1,&quot;stream&quot;:false}</stringProp>
+                    <stringProp name="Argument.metadata">=</stringProp>
+                  </elementProp>
+                </collectionProp>
+              </elementProp>
+            </HTTPSamplerProxy>
+            <hashTree/>
+            <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="缓存：规范化 JSON 首次请求" enabled="true">
+              <stringProp name="HTTPSampler.domain">${GW_HOST}</stringProp>
+              <stringProp name="HTTPSampler.port">${GW_PORT}</stringProp>
+              <stringProp name="HTTPSampler.protocol">http</stringProp>
+              <stringProp name="HTTPSampler.path">/v1/chat/completions</stringProp>
+              <stringProp name="HTTPSampler.method">POST</stringProp>
+              <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+              <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+              <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+                <collectionProp name="Arguments.arguments">
+                  <elementProp name="" elementType="HTTPArgument">
+                    <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                    <stringProp name="Argument.value">{&quot;model&quot;:&quot;mock-model&quot;,&quot;messages&quot;:[{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;canonical-${RUN_ID}&quot;}],&quot;temperature&quot;:0.3,&quot;stream&quot;:false}</stringProp>
+                    <stringProp name="Argument.metadata">=</stringProp>
+                  </elementProp>
+                </collectionProp>
+              </elementProp>
+            </HTTPSamplerProxy>
+            <hashTree/>
+            <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler" testname="等待规范化 JSON 缓存写入" enabled="true">
+              <stringProp name="cacheKey">true</stringProp>
+              <stringProp name="filename"></stringProp>
+              <stringProp name="parameters"></stringProp>
+              <stringProp name="script">Thread.sleep((props.get(&apos;cache_put_wait_ms&apos;,&apos;1000&apos;) as long)); SampleResult.setResponseCode(&apos;200&apos;); SampleResult.setSuccessful(true)</stringProp>
+              <stringProp name="scriptLanguage">groovy</stringProp>
+            </JSR223Sampler>
+            <hashTree/>
+            <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="缓存：字段重排 JSON 命中" enabled="true">
+              <stringProp name="HTTPSampler.domain">${GW_HOST}</stringProp>
+              <stringProp name="HTTPSampler.port">${GW_PORT}</stringProp>
+              <stringProp name="HTTPSampler.protocol">http</stringProp>
+              <stringProp name="HTTPSampler.path">/v1/chat/completions</stringProp>
+              <stringProp name="HTTPSampler.method">POST</stringProp>
+              <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+              <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+              <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+                <collectionProp name="Arguments.arguments">
+                  <elementProp name="" elementType="HTTPArgument">
+                    <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                    <stringProp name="Argument.value">{&quot;stream&quot;:false,&quot;temperature&quot;:0.3,&quot;messages&quot;:[{&quot;content&quot;:&quot;canonical-${RUN_ID}&quot;,&quot;role&quot;:&quot;user&quot;}],&quot;model&quot;:&quot;mock-model&quot;}</stringProp>
+                    <stringProp name="Argument.metadata">=</stringProp>
+                  </elementProp>
+                </collectionProp>
+              </elementProp>
+            </HTTPSamplerProxy>
+            <hashTree/>
+          </hashTree>
+          <GenericController guiclass="LogicControllerGui" testclass="GenericController" testname="缓存租户隔离测试"/>
+          <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="租户 B 请求头" enabled="true">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">X-Api-Key</stringProp>
+                  <stringProp name="Header.value">${SECOND_API_KEY}</stringProp>
+                </elementProp>
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">X-Provider</stringProp>
+                  <stringProp name="Header.value">${PRIMARY_PROVIDER}</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
+            <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="缓存：租户隔离请求未命中" enabled="true">
+              <stringProp name="HTTPSampler.domain">${GW_HOST}</stringProp>
+              <stringProp name="HTTPSampler.port">${GW_PORT}</stringProp>
+              <stringProp name="HTTPSampler.protocol">http</stringProp>
+              <stringProp name="HTTPSampler.path">/v1/chat/completions</stringProp>
+              <stringProp name="HTTPSampler.method">POST</stringProp>
+              <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+              <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+              <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+                <collectionProp name="Arguments.arguments">
+                  <elementProp name="" elementType="HTTPArgument">
+                    <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                    <stringProp name="Argument.value">{&quot;model&quot;:&quot;mock-model&quot;,&quot;messages&quot;:[{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;cache-functional-${RUN_ID}&quot;}],&quot;temperature&quot;:0.1,&quot;stream&quot;:false}</stringProp>
+                    <stringProp name="Argument.metadata">=</stringProp>
+                  </elementProp>
+                </collectionProp>
+              </elementProp>
+            </HTTPSamplerProxy>
+            <hashTree/>
+          </hashTree>
+          <GenericController guiclass="LogicControllerGui" testclass="GenericController" testname="缓存供应商隔离测试"/>
+          <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="临时供应商请求头" enabled="true">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">X-Api-Key</stringProp>
+                  <stringProp name="Header.value">${API_KEY}</stringProp>
+                </elementProp>
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">X-Provider</stringProp>
+                  <stringProp name="Header.value">${TEST_PROVIDER}</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
+            <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="缓存：供应商隔离请求未命中" enabled="true">
+              <stringProp name="HTTPSampler.domain">${GW_HOST}</stringProp>
+              <stringProp name="HTTPSampler.port">${GW_PORT}</stringProp>
+              <stringProp name="HTTPSampler.protocol">http</stringProp>
+              <stringProp name="HTTPSampler.path">/v1/chat/completions</stringProp>
+              <stringProp name="HTTPSampler.method">POST</stringProp>
+              <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+              <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+              <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+                <collectionProp name="Arguments.arguments">
+                  <elementProp name="" elementType="HTTPArgument">
+                    <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                    <stringProp name="Argument.value">{&quot;model&quot;:&quot;mock-model&quot;,&quot;messages&quot;:[{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;cache-functional-${RUN_ID}&quot;}],&quot;temperature&quot;:0.1,&quot;stream&quot;:false}</stringProp>
+                    <stringProp name="Argument.metadata">=</stringProp>
+                  </elementProp>
+                </collectionProp>
+              </elementProp>
+            </HTTPSamplerProxy>
+            <hashTree/>
+          </hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="管理端：禁用供应商（POST）">
+            <stringProp name="HTTPSampler.domain">${ADMIN_HOST}</stringProp>
+            <stringProp name="HTTPSampler.port">${ADMIN_PORT}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/api/admin/providers/${TEST_PROVIDER}/disable</stringProp>
+            <stringProp name="HTTPSampler.method">POST</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="用户定义的变量">
+              <collectionProp name="Arguments.arguments"/>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree/>
+          <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler" testname="等待禁用供应商配置刷新" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">Thread.sleep((props.get(&apos;provider_refresh_wait_ms&apos;,&apos;6000&apos;) as long)); SampleResult.setResponseCode(&apos;200&apos;); SampleResult.setSuccessful(true)</stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223Sampler>
+          <hashTree/>
+          <GenericController guiclass="LogicControllerGui" testclass="GenericController" testname="已禁用供应商验证"/>
+          <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="已禁用供应商请求头" enabled="true">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">X-Api-Key</stringProp>
+                  <stringProp name="Header.value">${API_KEY}</stringProp>
+                </elementProp>
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">X-Provider</stringProp>
+                  <stringProp name="Header.value">${TEST_PROVIDER}</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
+            <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="网关：拒绝已禁用的供应商" enabled="true">
+              <stringProp name="HTTPSampler.domain">${GW_HOST}</stringProp>
+              <stringProp name="HTTPSampler.port">${GW_PORT}</stringProp>
+              <stringProp name="HTTPSampler.protocol">http</stringProp>
+              <stringProp name="HTTPSampler.path">/v1/chat/completions</stringProp>
+              <stringProp name="HTTPSampler.method">POST</stringProp>
+              <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+              <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+              <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+                <collectionProp name="Arguments.arguments">
+                  <elementProp name="" elementType="HTTPArgument">
+                    <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                    <stringProp name="Argument.value">{&quot;model&quot;:&quot;mock-model&quot;,&quot;messages&quot;:[{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;disabled-provider-${RUN_ID}&quot;}],&quot;stream&quot;:false}</stringProp>
+                    <stringProp name="Argument.metadata">=</stringProp>
+                  </elementProp>
+                </collectionProp>
+              </elementProp>
+            </HTTPSamplerProxy>
+            <hashTree/>
+          </hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="管理端：启用供应商（POST）" enabled="true">
+            <stringProp name="HTTPSampler.domain">${ADMIN_HOST}</stringProp>
+            <stringProp name="HTTPSampler.port">${ADMIN_PORT}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/api/admin/providers/${TEST_PROVIDER}/enable</stringProp>
+            <stringProp name="HTTPSampler.method">POST</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+              <collectionProp name="Arguments.arguments"/>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree/>
+          <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler" testname="等待启用供应商配置刷新" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">Thread.sleep((props.get(&apos;provider_refresh_wait_ms&apos;,&apos;6000&apos;) as long)); SampleResult.setResponseCode(&apos;200&apos;); SampleResult.setSuccessful(true)</stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223Sampler>
+          <hashTree/>
+          <GenericController guiclass="LogicControllerGui" testclass="GenericController" testname="已启用供应商验证"/>
+          <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="重新启用的供应商请求头" enabled="true">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">X-Api-Key</stringProp>
+                  <stringProp name="Header.value">${API_KEY}</stringProp>
+                </elementProp>
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">X-Provider</stringProp>
+                  <stringProp name="Header.value">${TEST_PROVIDER}</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
+            <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="网关：重新启用的供应商路由成功" enabled="true">
+              <stringProp name="HTTPSampler.domain">${GW_HOST}</stringProp>
+              <stringProp name="HTTPSampler.port">${GW_PORT}</stringProp>
+              <stringProp name="HTTPSampler.protocol">http</stringProp>
+              <stringProp name="HTTPSampler.path">/v1/chat/completions</stringProp>
+              <stringProp name="HTTPSampler.method">POST</stringProp>
+              <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+              <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+              <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+                <collectionProp name="Arguments.arguments">
+                  <elementProp name="" elementType="HTTPArgument">
+                    <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                    <stringProp name="Argument.value">{&quot;model&quot;:&quot;mock-model&quot;,&quot;messages&quot;:[{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;enabled-provider-${RUN_ID}&quot;}],&quot;stream&quot;:false}</stringProp>
+                    <stringProp name="Argument.metadata">=</stringProp>
+                  </elementProp>
+                </collectionProp>
+              </elementProp>
+            </HTTPSamplerProxy>
+            <hashTree/>
+          </hashTree>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="管理端：CORS 预检请求" enabled="true">
+            <stringProp name="HTTPSampler.domain">${ADMIN_HOST}</stringProp>
+            <stringProp name="HTTPSampler.port">${ADMIN_PORT}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/api/admin/providers</stringProp>
+            <stringProp name="HTTPSampler.method">OPTIONS</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+              <collectionProp name="Arguments.arguments"/>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="CORS 请求头" enabled="true">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">Origin</stringProp>
+                  <stringProp name="Header.value">${__P(admin_origin,http://localhost:5173)}</stringProp>
+                </elementProp>
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">Access-Control-Request-Method</stringProp>
+                  <stringProp name="Header.value">GET</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
+          </hashTree>
+          <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler" testname="等待调用日志异步写入" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">Thread.sleep((props.get(&apos;call_log_wait_ms&apos;,&apos;3000&apos;) as long)); SampleResult.setResponseCode(&apos;200&apos;); SampleResult.setSuccessful(true)</stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223Sampler>
+          <hashTree/>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="管理端：查询调用日志（GET）" enabled="true">
+            <stringProp name="HTTPSampler.domain">${ADMIN_HOST}</stringProp>
+            <stringProp name="HTTPSampler.port">${ADMIN_PORT}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/api/admin/logs?startTime=${START_TIME}&amp;endTime=${END_TIME}&amp;page=1&amp;size=50</stringProp>
+            <stringProp name="HTTPSampler.method">GET</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+              <collectionProp name="Arguments.arguments"/>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree/>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="管理端：按条件筛选调用日志" enabled="true">
+            <stringProp name="HTTPSampler.domain">${ADMIN_HOST}</stringProp>
+            <stringProp name="HTTPSampler.port">${ADMIN_PORT}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/api/admin/logs?startTime=${START_TIME}&amp;endTime=${END_TIME}&amp;provider=${PRIMARY_PROVIDER}&amp;model=mock-model&amp;status=success&amp;page=1&amp;size=20</stringProp>
+            <stringProp name="HTTPSampler.method">GET</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+              <collectionProp name="Arguments.arguments"/>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree/>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="管理端：查询调用成本汇总" enabled="true">
+            <stringProp name="HTTPSampler.domain">${ADMIN_HOST}</stringProp>
+            <stringProp name="HTTPSampler.port">${ADMIN_PORT}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/api/admin/logs/cost-summary?startTime=${START_TIME}&amp;endTime=${END_TIME}</stringProp>
+            <stringProp name="HTTPSampler.method">GET</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+              <collectionProp name="Arguments.arguments"/>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree/>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="管理端：按供应商查询调用日志" enabled="true">
+            <stringProp name="HTTPSampler.domain">${ADMIN_HOST}</stringProp>
+            <stringProp name="HTTPSampler.port">${ADMIN_PORT}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/api/admin/logs/by-provider?startTime=${START_TIME}&amp;endTime=${END_TIME}</stringProp>
+            <stringProp name="HTTPSampler.method">GET</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+              <collectionProp name="Arguments.arguments"/>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree/>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="管理端：查询每日令牌用量" enabled="true">
+            <stringProp name="HTTPSampler.domain">${ADMIN_HOST}</stringProp>
+            <stringProp name="HTTPSampler.port">${ADMIN_PORT}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/api/admin/logs/daily-tokens?startTime=${START_TIME}&amp;endTime=${END_TIME}</stringProp>
+            <stringProp name="HTTPSampler.method">GET</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+              <collectionProp name="Arguments.arguments"/>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree/>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="管理端：删除供应商（DELETE）">
+            <stringProp name="HTTPSampler.domain">${ADMIN_HOST}</stringProp>
+            <stringProp name="HTTPSampler.port">${ADMIN_PORT}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/api/admin/providers/${TEST_PROVIDER}</stringProp>
+            <stringProp name="HTTPSampler.method">DELETE</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="用户定义的变量">
+              <collectionProp name="Arguments.arguments"/>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree/>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="管理端：查询已删除的供应商" enabled="true">
+            <stringProp name="HTTPSampler.domain">${ADMIN_HOST}</stringProp>
+            <stringProp name="HTTPSampler.port">${ADMIN_PORT}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/api/admin/providers/${TEST_PROVIDER}</stringProp>
+            <stringProp name="HTTPSampler.method">GET</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+              <collectionProp name="Arguments.arguments"/>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree/>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="管理端：删除不存在的供应商" enabled="true">
+            <stringProp name="HTTPSampler.domain">${ADMIN_HOST}</stringProp>
+            <stringProp name="HTTPSampler.port">${ADMIN_PORT}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/api/admin/providers/${TEST_PROVIDER}</stringProp>
+            <stringProp name="HTTPSampler.method">DELETE</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
+              <collectionProp name="Arguments.arguments"/>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree/>
+          <GenericController guiclass="LogicControllerGui" testclass="GenericController" testname="未知供应商验证" enabled="true"/>
+          <hashTree>
+            <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="未知供应商请求头" enabled="true">
+              <collectionProp name="HeaderManager.headers">
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">X-Api-Key</stringProp>
+                  <stringProp name="Header.value">${API_KEY}</stringProp>
+                </elementProp>
+                <elementProp name="" elementType="Header">
+                  <stringProp name="Header.name">X-Provider</stringProp>
+                  <stringProp name="Header.value">jmeter-provider-does-not-exist</stringProp>
+                </elementProp>
+              </collectionProp>
+            </HeaderManager>
+            <hashTree/>
+            <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="网关：拒绝未知供应商" enabled="true">
+              <stringProp name="HTTPSampler.domain">${GW_HOST}</stringProp>
+              <stringProp name="HTTPSampler.port">${GW_PORT}</stringProp>
+              <stringProp name="HTTPSampler.protocol">http</stringProp>
+              <stringProp name="HTTPSampler.path">/v1/chat/completions</stringProp>
+              <stringProp name="HTTPSampler.method">POST</stringProp>
+              <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+              <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+              <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+                <collectionProp name="Arguments.arguments">
+                  <elementProp name="" elementType="HTTPArgument">
+                    <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                    <stringProp name="Argument.value">{&quot;model&quot;:&quot;mock-model&quot;,&quot;messages&quot;:[{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;unknown-provider-${RUN_ID}&quot;}],&quot;stream&quot;:false}</stringProp>
+                    <stringProp name="Argument.metadata">=</stringProp>
+                  </elementProp>
+                </collectionProp>
+              </elementProp>
+            </HTTPSamplerProxy>
+            <hashTree/>
+          </hashTree>
+          <JSR223Assertion guiclass="TestBeanGUI" testclass="JSR223Assertion" testname="功能契约断言" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">
+import groovy.json.JsonSlurper
+
+def label = prev.getSampleLabel()
+def expectedCodes = [
+  &apos;网关：健康检查&apos;:[&apos;200&apos;], &apos;网关：信息查询&apos;:[&apos;200&apos;], &apos;网关：Prometheus 指标&apos;:[&apos;200&apos;],
+  &apos;网关：聊天请求缺少 API 密钥&apos;:[&apos;401&apos;],
+  &apos;管理端：创建供应商（PUT）&apos;:[&apos;200&apos;], &apos;管理端：查询供应商（GET）&apos;:[&apos;200&apos;],
+  &apos;管理端：查询供应商列表（GET）&apos;:[&apos;200&apos;], &apos;管理端：更新供应商（PUT）&apos;:[&apos;200&apos;],
+  &apos;管理端：查询 PUT 更新后的供应商&apos;:[&apos;200&apos;], &apos;管理端：更新供应商权重（PATCH）&apos;:[&apos;200&apos;],
+  &apos;管理端：查询权重更新后的供应商&apos;:[&apos;200&apos;],
+  &apos;网关：聊天补全&apos;:[&apos;200&apos;],
+  &apos;网关：聊天请求包含无效 JSON&apos;:[props.get(&apos;invalid_json_expected_code&apos;,&apos;400&apos;)],
+  &apos;网关：获取模型列表（GET）&apos;:[props.get(&apos;models_expected_code&apos;,&apos;200&apos;)],
+  &apos;网关：访问未知 v1 路径&apos;:[props.get(&apos;unknown_path_expected_code&apos;,&apos;404&apos;)],
+  &apos;网关：流式请求绕过缓存&apos;:[&apos;200&apos;], &apos;网关：重复流式请求仍绕过缓存&apos;:[&apos;200&apos;],
+  &apos;缓存：功能测试首次未命中&apos;:[&apos;200&apos;], &apos;缓存：功能测试再次请求命中&apos;:[&apos;200&apos;],
+  &apos;缓存：规范化 JSON 首次请求&apos;:[&apos;200&apos;], &apos;缓存：字段重排 JSON 命中&apos;:[&apos;200&apos;],
+  &apos;缓存：租户隔离请求未命中&apos;:[&apos;200&apos;], &apos;缓存：供应商隔离请求未命中&apos;:[&apos;200&apos;],
+  &apos;管理端：禁用供应商（POST）&apos;:[&apos;200&apos;], &apos;网关：拒绝已禁用的供应商&apos;:[&apos;400&apos;],
+  &apos;管理端：启用供应商（POST）&apos;:[&apos;200&apos;], &apos;网关：重新启用的供应商路由成功&apos;:[&apos;200&apos;],
+  &apos;管理端：CORS 预检请求&apos;:[&apos;200&apos;],
+  &apos;管理端：查询调用日志（GET）&apos;:[&apos;200&apos;], &apos;管理端：按条件筛选调用日志&apos;:[&apos;200&apos;], &apos;管理端：查询调用成本汇总&apos;:[&apos;200&apos;],
+  &apos;管理端：按供应商查询调用日志&apos;:[&apos;200&apos;], &apos;管理端：查询每日令牌用量&apos;:[&apos;200&apos;],
+  &apos;管理端：删除供应商（DELETE）&apos;:[&apos;204&apos;], &apos;管理端：查询已删除的供应商&apos;:[&apos;404&apos;],
+  &apos;管理端：删除不存在的供应商&apos;:[&apos;404&apos;], &apos;网关：拒绝未知供应商&apos;:[&apos;400&apos;]
+]
+
+if (expectedCodes.containsKey(label) &amp;&amp; !expectedCodes[label].contains(prev.getResponseCode())) {
+  AssertionResult.setFailure(true)
+  AssertionResult.setFailureMessage(&quot;${label}: expected HTTP ${expectedCodes[label]}, actual ${prev.getResponseCode()}, body=${prev.getResponseDataAsString()}&quot;)
+  return
+}
+
+def body = prev.getResponseDataAsString()
+def cacheHeader = prev.getResponseHeaders()?.readLines()?.find { it.toLowerCase().startsWith(&apos;x-cache:&apos;) }
+
+switch (label) {
+  case &apos;网关：健康检查&apos;:
+    if (!body.contains(&apos;UP&apos;)) throw new AssertionError(&apos;health response does not contain UP&apos;)
+    break
+  case &apos;网关：Prometheus 指标&apos;:
+    if (!body.contains(&apos;agent_gateway&apos;)) throw new AssertionError(&apos;custom gateway metrics are missing&apos;)
+    break
+  case &apos;管理端：查询供应商（GET）&apos;:
+    def json = new JsonSlurper().parseText(body)
+    if (json.name != vars.get(&apos;TEST_PROVIDER&apos;) &amp;&amp; json.name != &apos;${TEST_PROVIDER}&apos;) throw new AssertionError(&apos;created provider name mismatch&apos;)
+    break
+  case &apos;管理端：查询 PUT 更新后的供应商&apos;:
+    def updated = new JsonSlurper().parseText(body)
+    if (updated.name != vars.get(&apos;TEST_PROVIDER&apos;)) throw new AssertionError(&apos;path name did not override request body name&apos;)
+    if (updated.displayName != &apos;JMeter Test Provider Updated&apos; || updated.weight != 4) throw new AssertionError(&apos;PUT update was not persisted&apos;)
+    break
+  case &apos;管理端：查询权重更新后的供应商&apos;:
+    def weighted = new JsonSlurper().parseText(body)
+    if (weighted.weight != 7) throw new AssertionError(&apos;PATCH weight was not persisted&apos;)
+    break
+  case &apos;管理端：查询供应商列表（GET）&apos;:
+    if (!body.contains(vars.get(&apos;TEST_PROVIDER&apos;) ?: &apos;${TEST_PROVIDER}&apos;)) throw new AssertionError(&apos;created provider is absent from list&apos;)
+    break
+  case &apos;网关：聊天补全&apos;:
+    def json = new JsonSlurper().parseText(body)
+    if (!json.choices) throw new AssertionError(&apos;chat response choices are missing&apos;)
+    if (!json.usage) throw new AssertionError(&apos;chat response usage is missing&apos;)
+    break
+  case &apos;网关：流式请求绕过缓存&apos;:
+  case &apos;网关：重复流式请求仍绕过缓存&apos;:
+    if (cacheHeader) throw new AssertionError(&apos;stream response must bypass cache&apos;)
+    if (props.get(&apos;strict_stream_content_type&apos;,&apos;false&apos;).toBoolean() &amp;&amp; !prev.getContentType()?.contains(&apos;text/event-stream&apos;)) {
+      throw new AssertionError(&apos;stream response is not text/event-stream&apos;)
+    }
+    break
+  case &apos;缓存：功能测试首次未命中&apos;:
+    if (cacheHeader) throw new AssertionError(&apos;first unique request unexpectedly hit cache&apos;)
+    vars.put(&apos;FUNCTIONAL_CACHE_BODY&apos;, body)
+    break
+  case &apos;缓存：功能测试再次请求命中&apos;:
+    if (!cacheHeader?.toUpperCase()?.contains(&apos;HIT&apos;)) throw new AssertionError(&apos;second identical request did not hit cache&apos;)
+    if (vars.get(&apos;FUNCTIONAL_CACHE_BODY&apos;) != body) throw new AssertionError(&apos;cached response differs from original upstream response&apos;)
+    break
+  case &apos;缓存：规范化 JSON 首次请求&apos;:
+    if (cacheHeader) throw new AssertionError(&apos;first canonical JSON request unexpectedly hit cache&apos;)
+    break
+  case &apos;缓存：字段重排 JSON 命中&apos;:
+    if (!cacheHeader?.toUpperCase()?.contains(&apos;HIT&apos;)) throw new AssertionError(&apos;reordered JSON did not reuse canonical cache key&apos;)
+    break
+  case &apos;缓存：租户隔离请求未命中&apos;:
+  case &apos;缓存：供应商隔离请求未命中&apos;:
+    if (cacheHeader) throw new AssertionError(&quot;${label} unexpectedly reused another namespace cache&quot;)
+    break
+  case &apos;管理端：CORS 预检请求&apos;:
+    if (!prev.getResponseHeaders().toLowerCase().contains(&apos;access-control-allow-origin&apos;)) throw new AssertionError(&apos;CORS allow-origin header is missing&apos;)
+    break
+  case &apos;管理端：查询调用日志（GET）&apos;:
+  case &apos;管理端：按条件筛选调用日志&apos;:
+  case &apos;管理端：按供应商查询调用日志&apos;:
+  case &apos;管理端：查询每日令牌用量&apos;:
+    if (!(new JsonSlurper().parseText(body) instanceof List)) throw new AssertionError(&quot;${label} must return a JSON array&quot;)
+    break
+  case &apos;管理端：查询调用成本汇总&apos;:
+    def json = new JsonSlurper().parseText(body)
+    [&apos;totalCalls&apos;,&apos;totalTokens&apos;,&apos;totalCost&apos;,&apos;avgLatencyMs&apos;,&apos;successCount&apos;,&apos;failCount&apos;].each {
+      if (!json.containsKey(it)) throw new AssertionError(&quot;cost summary missing ${it}&quot;)
+    }
+    break
+}
+            </stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223Assertion>
+          <hashTree/>
+        </hashTree>
+      </hashTree>
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="10 - L1 缓存准备" enabled="true">
+        <intProp name="ThreadGroup.num_threads">1</intProp>
+        <intProp name="ThreadGroup.ramp_time">1</intProp>
+        <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
+        <stringProp name="ThreadGroup.on_sample_error">stoptest</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController" testname="循环控制器">
+          <stringProp name="LoopController.loops">1</stringProp>
+          <boolProp name="LoopController.continue_forever">false</boolProp>
+        </elementProp>
+      </ThreadGroup>
+      <hashTree>
+        <IfController guiclass="IfControllerPanel" testclass="IfController" testname="当 scenario=cache-l1|all 时运行" enabled="true">
+          <stringProp name="IfController.condition">${__groovy([&apos;cache-l1&apos;\,&apos;all&apos;].contains(props.get(&apos;scenario&apos;\,&apos;functional&apos;)))}</stringProp>
+          <boolProp name="IfController.evaluateAll">false</boolProp>
+          <boolProp name="IfController.useExpression">true</boolProp>
+        </IfController>
+        <hashTree>
+          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="L1 请求头" enabled="true">
+            <collectionProp name="HeaderManager.headers">
+              <elementProp name="" elementType="Header">
+                <stringProp name="Header.name">X-Api-Key</stringProp>
+                <stringProp name="Header.value">${API_KEY}</stringProp>
+              </elementProp>
+              <elementProp name="" elementType="Header">
+                <stringProp name="Header.name">X-Provider</stringProp>
+                <stringProp name="Header.value">${PRIMARY_PROVIDER}</stringProp>
+              </elementProp>
+            </collectionProp>
+          </HeaderManager>
+          <hashTree/>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="L1 缓存预热请求" enabled="true">
+            <stringProp name="HTTPSampler.domain">${GW_HOST}</stringProp>
+            <stringProp name="HTTPSampler.port">${GW_PORT}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/v1/chat/completions</stringProp>
+            <stringProp name="HTTPSampler.method">POST</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+              <collectionProp name="Arguments.arguments">
+                <elementProp name="" elementType="HTTPArgument">
+                  <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                  <stringProp name="Argument.value">{&quot;model&quot;:&quot;mock-model&quot;,&quot;messages&quot;:[{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;pressure-l1-${CACHE_NAMESPACE}&quot;}],&quot;temperature&quot;:0,&quot;stream&quot;:false}</stringProp>
+                  <stringProp name="Argument.metadata">=</stringProp>
+                </elementProp>
+              </collectionProp>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree/>
+          <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler" testname="等待 L1 预热数据写入" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">Thread.sleep((props.get(&apos;cache_put_wait_ms&apos;,&apos;1000&apos;) as long)); SampleResult.setResponseCode(&apos;200&apos;); SampleResult.setSuccessful(true)</stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223Sampler>
+          <hashTree/>
+        </hashTree>
+      </hashTree>
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="11 - L1 Caffeine 缓存压测" enabled="true">
+        <stringProp name="ThreadGroup.num_threads">${__groovy([&apos;cache-l1&apos;\,&apos;all&apos;].contains(props.get(&apos;scenario&apos;\,&apos;functional&apos;)) ? props.get(&apos;cache_threads&apos;\,&apos;200&apos;) : &apos;1&apos;)}</stringProp>
+        <stringProp name="ThreadGroup.ramp_time">${__groovy([&apos;cache-l1&apos;\,&apos;all&apos;].contains(props.get(&apos;scenario&apos;\,&apos;functional&apos;)) ? props.get(&apos;cache_ramp&apos;\,&apos;5&apos;) : &apos;0&apos;)}</stringProp>
+        <stringProp name="ThreadGroup.duration">${__P(l1_duration,50)}</stringProp>
+        <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
+        <boolProp name="ThreadGroup.scheduler">true</boolProp>
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController" testname="循环控制器">
+          <stringProp name="LoopController.loops">${__groovy([&apos;cache-l1&apos;\,&apos;all&apos;].contains(props.get(&apos;scenario&apos;\,&apos;functional&apos;)) ? -1 : 1)}</stringProp>
+          <boolProp name="LoopController.continue_forever">false</boolProp>
+        </elementProp>
+      </ThreadGroup>
+      <hashTree>
+        <IfController guiclass="IfControllerPanel" testclass="IfController" testname="当 scenario=cache-l1|all 时运行" enabled="true">
+          <stringProp name="IfController.condition">${__groovy([&apos;cache-l1&apos;\,&apos;all&apos;].contains(props.get(&apos;scenario&apos;\,&apos;functional&apos;)))}</stringProp>
+          <boolProp name="IfController.evaluateAll">false</boolProp>
+          <boolProp name="IfController.useExpression">true</boolProp>
+        </IfController>
+        <hashTree>
+          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="L1 压测请求头" enabled="true">
+            <collectionProp name="HeaderManager.headers">
+              <elementProp name="" elementType="Header">
+                <stringProp name="Header.name">X-Api-Key</stringProp>
+                <stringProp name="Header.value">${API_KEY}</stringProp>
+              </elementProp>
+              <elementProp name="" elementType="Header">
+                <stringProp name="Header.name">X-Provider</stringProp>
+                <stringProp name="Header.value">${PRIMARY_PROVIDER}</stringProp>
+              </elementProp>
+            </collectionProp>
+          </HeaderManager>
+          <hashTree/>
+          <PreciseThroughputTimer guiclass="TestBeanGUI" testclass="PreciseThroughputTimer" testname="L1 目标 QPS" enabled="true">
+            <stringProp name="allowedThroughputSurplus">1.0</stringProp>
+            <intProp name="batchSize">1</intProp>
+            <intProp name="batchThreadDelay">0</intProp>
+            <stringProp name="duration">${__P(l1_duration,50)}</stringProp>
+            <stringProp name="exactLimit">0</stringProp>
+            <longProp name="randomSeed">0</longProp>
+            <stringProp name="throughput">${__P(cache_qps,500)}</stringProp>
+            <intProp name="throughputPeriod">1</intProp>
+          </PreciseThroughputTimer>
+          <hashTree/>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="L1 缓存命中请求" enabled="true">
+            <stringProp name="HTTPSampler.domain">${GW_HOST}</stringProp>
+            <stringProp name="HTTPSampler.port">${GW_PORT}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/v1/chat/completions</stringProp>
+            <stringProp name="HTTPSampler.method">POST</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+              <collectionProp name="Arguments.arguments">
+                <elementProp name="" elementType="HTTPArgument">
+                  <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                  <stringProp name="Argument.value">{&quot;model&quot;:&quot;mock-model&quot;,&quot;messages&quot;:[{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;pressure-l1-${CACHE_NAMESPACE}&quot;}],&quot;temperature&quot;:0,&quot;stream&quot;:false}</stringProp>
+                  <stringProp name="Argument.metadata">=</stringProp>
+                </elementProp>
+              </collectionProp>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <JSR223Assertion guiclass="TestBeanGUI" testclass="JSR223Assertion" testname="断言：L1 缓存命中" enabled="true">
+              <stringProp name="cacheKey">true</stringProp>
+              <stringProp name="filename"></stringProp>
+              <stringProp name="parameters"></stringProp>
+              <stringProp name="script">
+if (prev.getResponseCode() != &apos;200&apos;) { AssertionResult.setFailure(true); AssertionResult.setFailureMessage(&apos;L1 expected HTTP 200, actual &apos; + prev.getResponseCode()); return }
+if (!prev.getResponseHeaders().toUpperCase().contains(&apos;X-CACHE: HIT&apos;)) { AssertionResult.setFailure(true); AssertionResult.setFailureMessage(&apos;L1 request did not contain X-Cache: HIT&apos;) }
+              </stringProp>
+              <stringProp name="scriptLanguage">groovy</stringProp>
+            </JSR223Assertion>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+      </hashTree>
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="20 - L2 Redis 缓存准备" enabled="true">
+        <intProp name="ThreadGroup.num_threads">1</intProp>
+        <intProp name="ThreadGroup.ramp_time">1</intProp>
+        <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
+        <stringProp name="ThreadGroup.on_sample_error">stoptest</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController" testname="L2 预热循环">
+          <stringProp name="LoopController.loops">${__groovy([&apos;cache-l2&apos;\,&apos;all&apos;].contains(props.get(&apos;scenario&apos;\,&apos;functional&apos;)) ? props.get(&apos;l2_key_count&apos;\,&apos;25000&apos;) : &apos;1&apos;)}</stringProp>
+          <boolProp name="LoopController.continue_forever">false</boolProp>
+        </elementProp>
+      </ThreadGroup>
+      <hashTree>
+        <IfController guiclass="IfControllerPanel" testclass="IfController" testname="当 scenario=cache-l2|all 时运行" enabled="true">
+          <stringProp name="IfController.condition">${__groovy([&apos;cache-l2&apos;\,&apos;all&apos;].contains(props.get(&apos;scenario&apos;\,&apos;functional&apos;)))}</stringProp>
+          <boolProp name="IfController.evaluateAll">false</boolProp>
+          <boolProp name="IfController.useExpression">true</boolProp>
+        </IfController>
+        <hashTree>
+          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="L2 预热请求头" enabled="true">
+            <collectionProp name="HeaderManager.headers">
+              <elementProp name="" elementType="Header">
+                <stringProp name="Header.name">X-Api-Key</stringProp>
+                <stringProp name="Header.value">${API_KEY}</stringProp>
+              </elementProp>
+              <elementProp name="" elementType="Header">
+                <stringProp name="Header.name">X-Provider</stringProp>
+                <stringProp name="Header.value">${PRIMARY_PROVIDER}</stringProp>
+              </elementProp>
+            </collectionProp>
+          </HeaderManager>
+          <hashTree/>
+          <PreciseThroughputTimer guiclass="TestBeanGUI" testclass="PreciseThroughputTimer" testname="L2 预热 QPS" enabled="true">
+            <stringProp name="allowedThroughputSurplus">1.0</stringProp>
+            <intProp name="batchSize">1</intProp>
+            <intProp name="batchThreadDelay">0</intProp>
+            <longProp name="duration">3600</longProp>
+            <stringProp name="exactLimit">${__P(l2_key_count,25000)}</stringProp>
+            <longProp name="randomSeed">0</longProp>
+            <stringProp name="throughput">${__P(cache_prewarm_qps,500)}</stringProp>
+            <intProp name="throughputPeriod">1</intProp>
+          </PreciseThroughputTimer>
+          <hashTree/>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="L2 缓存预热请求" enabled="true">
+            <stringProp name="HTTPSampler.domain">${GW_HOST}</stringProp>
+            <stringProp name="HTTPSampler.port">${GW_PORT}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/v1/chat/completions</stringProp>
+            <stringProp name="HTTPSampler.method">POST</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+              <collectionProp name="Arguments.arguments">
+                <elementProp name="" elementType="HTTPArgument">
+                  <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                  <stringProp name="Argument.value">{&quot;model&quot;:&quot;mock-model&quot;,&quot;messages&quot;:[{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;pressure-l2-${CACHE_NAMESPACE}-${__counter(FALSE,l2WarmIndex)}&quot;}],&quot;temperature&quot;:0,&quot;stream&quot;:false}</stringProp>
+                  <stringProp name="Argument.metadata">=</stringProp>
+                </elementProp>
+              </collectionProp>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <JSR223Assertion guiclass="TestBeanGUI" testclass="JSR223Assertion" testname="断言：L2 预热成功" enabled="true">
+              <stringProp name="cacheKey">true</stringProp>
+              <stringProp name="filename"></stringProp>
+              <stringProp name="parameters"></stringProp>
+              <stringProp name="script">if (prev.getResponseCode() != &apos;200&apos;) { AssertionResult.setFailure(true); AssertionResult.setFailureMessage(&apos;L2 prewarm expected HTTP 200, actual &apos; + prev.getResponseCode()) }</stringProp>
+              <stringProp name="scriptLanguage">groovy</stringProp>
+            </JSR223Assertion>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+      </hashTree>
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="21 - 等待 L1 过期并初始化计数器" enabled="true">
+        <intProp name="ThreadGroup.num_threads">1</intProp>
+        <intProp name="ThreadGroup.ramp_time">1</intProp>
+        <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
+        <stringProp name="ThreadGroup.on_sample_error">stoptest</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController" testname="循环控制器">
+          <stringProp name="LoopController.loops">1</stringProp>
+          <boolProp name="LoopController.continue_forever">false</boolProp>
+        </elementProp>
+      </ThreadGroup>
+      <hashTree>
+        <IfController guiclass="IfControllerPanel" testclass="IfController" testname="当 scenario=cache-l2|all 时运行" enabled="true">
+          <stringProp name="IfController.condition">${__groovy([&apos;cache-l2&apos;\,&apos;all&apos;].contains(props.get(&apos;scenario&apos;\,&apos;functional&apos;)))}</stringProp>
+          <boolProp name="IfController.evaluateAll">false</boolProp>
+          <boolProp name="IfController.useExpression">true</boolProp>
+        </IfController>
+        <hashTree>
+          <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler" testname="等待 L1 过期以测试 L2" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">
+Thread.sleep((props.get(&apos;l1_expire_wait_ms&apos;,&apos;65000&apos;) as long))
+props.put(&apos;lh.l2.run.counter&apos;, new java.util.concurrent.atomic.AtomicLong(0))
+SampleResult.setResponseCode(&apos;200&apos;)
+SampleResult.setSuccessful(true)
+              </stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223Sampler>
+          <hashTree/>
+        </hashTree>
+      </hashTree>
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="22 - L2 Redis 缓存压测" enabled="true">
+        <stringProp name="ThreadGroup.num_threads">${__groovy([&apos;cache-l2&apos;\,&apos;all&apos;].contains(props.get(&apos;scenario&apos;\,&apos;functional&apos;)) ? props.get(&apos;cache_threads&apos;\,&apos;200&apos;) : &apos;1&apos;)}</stringProp>
+        <stringProp name="ThreadGroup.ramp_time">${__groovy([&apos;cache-l2&apos;\,&apos;all&apos;].contains(props.get(&apos;scenario&apos;\,&apos;functional&apos;)) ? props.get(&apos;cache_ramp&apos;\,&apos;5&apos;) : &apos;0&apos;)}</stringProp>
+        <stringProp name="ThreadGroup.duration">${__P(l2_duration,60)}</stringProp>
+        <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
+        <boolProp name="ThreadGroup.scheduler">true</boolProp>
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController" testname="循环控制器">
+          <stringProp name="LoopController.loops">${__groovy([&apos;cache-l2&apos;\,&apos;all&apos;].contains(props.get(&apos;scenario&apos;\,&apos;functional&apos;)) ? -1 : 1)}</stringProp>
+          <boolProp name="LoopController.continue_forever">false</boolProp>
+        </elementProp>
+      </ThreadGroup>
+      <hashTree>
+        <IfController guiclass="IfControllerPanel" testclass="IfController" testname="当 scenario=cache-l2|all 时运行" enabled="true">
+          <stringProp name="IfController.condition">${__groovy([&apos;cache-l2&apos;\,&apos;all&apos;].contains(props.get(&apos;scenario&apos;\,&apos;functional&apos;)))}</stringProp>
+          <boolProp name="IfController.evaluateAll">false</boolProp>
+          <boolProp name="IfController.useExpression">true</boolProp>
+        </IfController>
+        <hashTree>
+          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="L2 压测请求头" enabled="true">
+            <collectionProp name="HeaderManager.headers">
+              <elementProp name="" elementType="Header">
+                <stringProp name="Header.name">X-Api-Key</stringProp>
+                <stringProp name="Header.value">${API_KEY}</stringProp>
+              </elementProp>
+              <elementProp name="" elementType="Header">
+                <stringProp name="Header.name">X-Provider</stringProp>
+                <stringProp name="Header.value">${PRIMARY_PROVIDER}</stringProp>
+              </elementProp>
+            </collectionProp>
+          </HeaderManager>
+          <hashTree/>
+          <PreciseThroughputTimer guiclass="TestBeanGUI" testclass="PreciseThroughputTimer" testname="L2 目标 QPS" enabled="true">
+            <stringProp name="allowedThroughputSurplus">1.0</stringProp>
+            <intProp name="batchSize">1</intProp>
+            <intProp name="batchThreadDelay">0</intProp>
+            <stringProp name="duration">${__P(l2_duration,60)}</stringProp>
+            <stringProp name="exactLimit">0</stringProp>
+            <longProp name="randomSeed">0</longProp>
+            <stringProp name="throughput">${__P(cache_qps,300)}</stringProp>
+            <intProp name="throughputPeriod">1</intProp>
+          </PreciseThroughputTimer>
+          <hashTree/>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="L2 缓存命中请求" enabled="true">
+            <stringProp name="HTTPSampler.domain">${GW_HOST}</stringProp>
+            <stringProp name="HTTPSampler.port">${GW_PORT}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/v1/chat/completions</stringProp>
+            <stringProp name="HTTPSampler.method">POST</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+              <collectionProp name="Arguments.arguments">
+                <elementProp name="" elementType="HTTPArgument">
+                  <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                  <stringProp name="Argument.value">{}</stringProp>
+                  <stringProp name="Argument.metadata">=</stringProp>
+                </elementProp>
+              </collectionProp>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <JSR223PreProcessor guiclass="TestBeanGUI" testclass="JSR223PreProcessor" testname="选择一次性 L2 缓存键" enabled="true">
+              <stringProp name="cacheKey">true</stringProp>
+              <stringProp name="filename"></stringProp>
+              <stringProp name="parameters"></stringProp>
+              <stringProp name="script">
+def counter = props.get(&apos;lh.l2.run.counter&apos;)
+if (counter == null) { counter = new java.util.concurrent.atomic.AtomicLong(0); props.put(&apos;lh.l2.run.counter&apos;, counter) }
+long index = counter.getAndIncrement() + 1
+long max = props.get(&apos;l2_key_count&apos;,&apos;25000&apos;) as long
+if (index &gt; max) { ctx.getThread().stop(); return }
+def json = &apos;{&quot;model&quot;:&quot;mock-model&quot;,&quot;messages&quot;:[{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;pressure-l2-&apos; + vars.get(&apos;CACHE_NAMESPACE&apos;) + &apos;-&apos; + index + &apos;&quot;}],&quot;temperature&quot;:0,&quot;stream&quot;:false}&apos;
+sampler.getArguments().getArgument(0).setValue(json)
+              </stringProp>
+              <stringProp name="scriptLanguage">groovy</stringProp>
+            </JSR223PreProcessor>
+            <hashTree/>
+            <JSR223Assertion guiclass="TestBeanGUI" testclass="JSR223Assertion" testname="断言：Redis L2 缓存命中" enabled="true">
+              <stringProp name="cacheKey">true</stringProp>
+              <stringProp name="filename"></stringProp>
+              <stringProp name="parameters"></stringProp>
+              <stringProp name="script">
+if (prev.getResponseCode() != &apos;200&apos;) { AssertionResult.setFailure(true); AssertionResult.setFailureMessage(&apos;L2 expected HTTP 200, actual &apos; + prev.getResponseCode()); return }
+if (!prev.getResponseHeaders().toUpperCase().contains(&apos;X-CACHE: HIT&apos;)) { AssertionResult.setFailure(true); AssertionResult.setFailureMessage(&apos;Expected Redis L2 hit; key may have expired or was not prewarmed&apos;) }
+              </stringProp>
+              <stringProp name="scriptLanguage">groovy</stringProp>
+            </JSR223Assertion>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+      </hashTree>
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="30 - 混合缓存 L2 池准备" enabled="true">
+        <intProp name="ThreadGroup.num_threads">1</intProp>
+        <intProp name="ThreadGroup.ramp_time">1</intProp>
+        <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
+        <stringProp name="ThreadGroup.on_sample_error">stoptest</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController" testname="混合缓存 L2 预热循环">
+          <stringProp name="LoopController.loops">${__groovy([&apos;cache-mixed&apos;\,&apos;all&apos;].contains(props.get(&apos;scenario&apos;\,&apos;functional&apos;)) ? props.get(&apos;mixed_l2_key_count&apos;\,&apos;10000&apos;) : &apos;1&apos;)}</stringProp>
+          <boolProp name="LoopController.continue_forever">false</boolProp>
+        </elementProp>
+      </ThreadGroup>
+      <hashTree>
+        <IfController guiclass="IfControllerPanel" testclass="IfController" testname="当 scenario=cache-mixed|all 时运行" enabled="true">
+          <stringProp name="IfController.condition">${__groovy([&apos;cache-mixed&apos;\,&apos;all&apos;].contains(props.get(&apos;scenario&apos;\,&apos;functional&apos;)))}</stringProp>
+          <boolProp name="IfController.evaluateAll">false</boolProp>
+          <boolProp name="IfController.useExpression">true</boolProp>
+        </IfController>
+        <hashTree>
+          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="混合缓存预热请求头" enabled="true">
+            <collectionProp name="HeaderManager.headers">
+              <elementProp name="" elementType="Header">
+                <stringProp name="Header.name">X-Api-Key</stringProp>
+                <stringProp name="Header.value">${API_KEY}</stringProp>
+              </elementProp>
+              <elementProp name="" elementType="Header">
+                <stringProp name="Header.name">X-Provider</stringProp>
+                <stringProp name="Header.value">${PRIMARY_PROVIDER}</stringProp>
+              </elementProp>
+            </collectionProp>
+          </HeaderManager>
+          <hashTree/>
+          <PreciseThroughputTimer guiclass="TestBeanGUI" testclass="PreciseThroughputTimer" testname="混合缓存预热 QPS" enabled="true">
+            <stringProp name="allowedThroughputSurplus">1.0</stringProp>
+            <intProp name="batchSize">1</intProp>
+            <intProp name="batchThreadDelay">0</intProp>
+            <longProp name="duration">3600</longProp>
+            <stringProp name="exactLimit">${__P(mixed_l2_key_count,10000)}</stringProp>
+            <longProp name="randomSeed">0</longProp>
+            <stringProp name="throughput">${__P(cache_prewarm_qps,500)}</stringProp>
+            <intProp name="throughputPeriod">1</intProp>
+          </PreciseThroughputTimer>
+          <hashTree/>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="混合缓存 L2 预热请求" enabled="true">
+            <stringProp name="HTTPSampler.domain">${GW_HOST}</stringProp>
+            <stringProp name="HTTPSampler.port">${GW_PORT}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/v1/chat/completions</stringProp>
+            <stringProp name="HTTPSampler.method">POST</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+              <collectionProp name="Arguments.arguments">
+                <elementProp name="" elementType="HTTPArgument">
+                  <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                  <stringProp name="Argument.value">{&quot;model&quot;:&quot;mock-model&quot;,&quot;messages&quot;:[{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;pressure-mixed-l2-${CACHE_NAMESPACE}-${__counter(FALSE,mixedWarmIndex)}&quot;}],&quot;temperature&quot;:0,&quot;stream&quot;:false}</stringProp>
+                  <stringProp name="Argument.metadata">=</stringProp>
+                </elementProp>
+              </collectionProp>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree/>
+        </hashTree>
+      </hashTree>
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="31 - 混合缓存：等待 L1 过期并预热热点键" enabled="true">
+        <intProp name="ThreadGroup.num_threads">1</intProp>
+        <intProp name="ThreadGroup.ramp_time">1</intProp>
+        <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
+        <stringProp name="ThreadGroup.on_sample_error">stoptest</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController" testname="循环控制器">
+          <stringProp name="LoopController.loops">1</stringProp>
+          <boolProp name="LoopController.continue_forever">false</boolProp>
+        </elementProp>
+      </ThreadGroup>
+      <hashTree>
+        <IfController guiclass="IfControllerPanel" testclass="IfController" testname="当 scenario=cache-mixed|all 时运行" enabled="true">
+          <stringProp name="IfController.condition">${__groovy([&apos;cache-mixed&apos;\,&apos;all&apos;].contains(props.get(&apos;scenario&apos;\,&apos;functional&apos;)))}</stringProp>
+          <boolProp name="IfController.evaluateAll">false</boolProp>
+          <boolProp name="IfController.useExpression">true</boolProp>
+        </IfController>
+        <hashTree>
+          <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler" testname="等待 L1 过期以测试混合缓存" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">
+Thread.sleep((props.get(&apos;l1_expire_wait_ms&apos;,&apos;65000&apos;) as long))
+props.put(&apos;lh.mixed.l2.counter&apos;, new java.util.concurrent.atomic.AtomicLong(0))
+props.put(&apos;lh.mixed.miss.counter&apos;, new java.util.concurrent.atomic.AtomicLong(0))
+SampleResult.setResponseCode(&apos;200&apos;)
+SampleResult.setSuccessful(true)
+              </stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223Sampler>
+          <hashTree/>
+          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="混合缓存热点键请求头" enabled="true">
+            <collectionProp name="HeaderManager.headers">
+              <elementProp name="" elementType="Header">
+                <stringProp name="Header.name">X-Api-Key</stringProp>
+                <stringProp name="Header.value">${API_KEY}</stringProp>
+              </elementProp>
+              <elementProp name="" elementType="Header">
+                <stringProp name="Header.name">X-Provider</stringProp>
+                <stringProp name="Header.value">${PRIMARY_PROVIDER}</stringProp>
+              </elementProp>
+            </collectionProp>
+          </HeaderManager>
+          <hashTree/>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="混合缓存 L1 热点键预热请求" enabled="true">
+            <stringProp name="HTTPSampler.domain">${GW_HOST}</stringProp>
+            <stringProp name="HTTPSampler.port">${GW_PORT}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/v1/chat/completions</stringProp>
+            <stringProp name="HTTPSampler.method">POST</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+              <collectionProp name="Arguments.arguments">
+                <elementProp name="" elementType="HTTPArgument">
+                  <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                  <stringProp name="Argument.value">{&quot;model&quot;:&quot;mock-model&quot;,&quot;messages&quot;:[{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;pressure-mixed-l1-${CACHE_NAMESPACE}&quot;}],&quot;temperature&quot;:0,&quot;stream&quot;:false}</stringProp>
+                  <stringProp name="Argument.metadata">=</stringProp>
+                </elementProp>
+              </collectionProp>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree/>
+          <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler" testname="等待混合缓存热点键写入" enabled="true">
+            <stringProp name="cacheKey">true</stringProp>
+            <stringProp name="filename"></stringProp>
+            <stringProp name="parameters"></stringProp>
+            <stringProp name="script">Thread.sleep((props.get(&apos;cache_put_wait_ms&apos;,&apos;1000&apos;) as long)); SampleResult.setResponseCode(&apos;200&apos;); SampleResult.setSuccessful(true)</stringProp>
+            <stringProp name="scriptLanguage">groovy</stringProp>
+          </JSR223Sampler>
+          <hashTree/>
+        </hashTree>
+      </hashTree>
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="32 - 混合多级缓存压测" enabled="true">
+        <stringProp name="ThreadGroup.num_threads">${__groovy([&apos;cache-mixed&apos;\,&apos;all&apos;].contains(props.get(&apos;scenario&apos;\,&apos;functional&apos;)) ? props.get(&apos;cache_threads&apos;\,&apos;200&apos;) : &apos;1&apos;)}</stringProp>
+        <stringProp name="ThreadGroup.ramp_time">${__groovy([&apos;cache-mixed&apos;\,&apos;all&apos;].contains(props.get(&apos;scenario&apos;\,&apos;functional&apos;)) ? props.get(&apos;cache_ramp&apos;\,&apos;5&apos;) : &apos;0&apos;)}</stringProp>
+        <stringProp name="ThreadGroup.duration">${__P(mixed_duration,60)}</stringProp>
+        <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
+        <boolProp name="ThreadGroup.scheduler">true</boolProp>
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController" testname="循环控制器">
+          <stringProp name="LoopController.loops">${__groovy([&apos;cache-mixed&apos;\,&apos;all&apos;].contains(props.get(&apos;scenario&apos;\,&apos;functional&apos;)) ? -1 : 1)}</stringProp>
+          <boolProp name="LoopController.continue_forever">false</boolProp>
+        </elementProp>
+      </ThreadGroup>
+      <hashTree>
+        <IfController guiclass="IfControllerPanel" testclass="IfController" testname="当 scenario=cache-mixed|all 时运行" enabled="true">
+          <stringProp name="IfController.condition">${__groovy([&apos;cache-mixed&apos;\,&apos;all&apos;].contains(props.get(&apos;scenario&apos;\,&apos;functional&apos;)))}</stringProp>
+          <boolProp name="IfController.evaluateAll">false</boolProp>
+          <boolProp name="IfController.useExpression">true</boolProp>
+        </IfController>
+        <hashTree>
+          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="混合缓存压测请求头" enabled="true">
+            <collectionProp name="HeaderManager.headers">
+              <elementProp name="" elementType="Header">
+                <stringProp name="Header.name">X-Api-Key</stringProp>
+                <stringProp name="Header.value">${API_KEY}</stringProp>
+              </elementProp>
+              <elementProp name="" elementType="Header">
+                <stringProp name="Header.name">X-Provider</stringProp>
+                <stringProp name="Header.value">${PRIMARY_PROVIDER}</stringProp>
+              </elementProp>
+            </collectionProp>
+          </HeaderManager>
+          <hashTree/>
+          <PreciseThroughputTimer guiclass="TestBeanGUI" testclass="PreciseThroughputTimer" testname="混合缓存目标 QPS" enabled="true">
+            <stringProp name="allowedThroughputSurplus">1.0</stringProp>
+            <intProp name="batchSize">1</intProp>
+            <intProp name="batchThreadDelay">0</intProp>
+            <stringProp name="duration">${__P(mixed_duration,60)}</stringProp>
+            <stringProp name="exactLimit">0</stringProp>
+            <longProp name="randomSeed">0</longProp>
+            <stringProp name="throughput">${__P(cache_qps,500)}</stringProp>
+            <intProp name="throughputPeriod">1</intProp>
+          </PreciseThroughputTimer>
+          <hashTree/>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="混合多级缓存请求" enabled="true">
+            <stringProp name="HTTPSampler.domain">${GW_HOST}</stringProp>
+            <stringProp name="HTTPSampler.port">${GW_PORT}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/v1/chat/completions</stringProp>
+            <stringProp name="HTTPSampler.method">POST</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+              <collectionProp name="Arguments.arguments">
+                <elementProp name="" elementType="HTTPArgument">
+                  <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                  <stringProp name="Argument.value">{}</stringProp>
+                  <stringProp name="Argument.metadata">=</stringProp>
+                </elementProp>
+              </collectionProp>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <JSR223PreProcessor guiclass="TestBeanGUI" testclass="JSR223PreProcessor" testname="按 80% L1、15% L2、5% 未命中选择请求" enabled="true">
+              <stringProp name="cacheKey">true</stringProp>
+              <stringProp name="filename"></stringProp>
+              <stringProp name="parameters"></stringProp>
+              <stringProp name="script">
+int bucket = java.util.concurrent.ThreadLocalRandom.current().nextInt(100)
+def namespace = vars.get(&apos;CACHE_NAMESPACE&apos;)
+def content
+def expected
+if (bucket &lt; 80) {
+  content = &apos;pressure-mixed-l1-&apos; + namespace
+  expected = &apos;HIT&apos;
+  sampler.setName(&apos;混合多级缓存请求 L1 80%&apos;)
+} else if (bucket &lt; 95) {
+  def counter = props.get(&apos;lh.mixed.l2.counter&apos;)
+  long index = counter.getAndIncrement() + 1
+  long max = props.get(&apos;mixed_l2_key_count&apos;,&apos;10000&apos;) as long
+  if (index &gt; max) { ctx.getThread().stop(); return }
+  content = &apos;pressure-mixed-l2-&apos; + namespace + &apos;-&apos; + index
+  expected = &apos;HIT&apos;
+  sampler.setName(&apos;混合多级缓存请求 L2 15%&apos;)
+} else {
+  def counter = props.get(&apos;lh.mixed.miss.counter&apos;)
+  long index = counter.getAndIncrement() + 1
+  content = &apos;pressure-mixed-miss-&apos; + namespace + &apos;-&apos; + index
+  expected = &apos;MISS&apos;
+  sampler.setName(&apos;混合多级缓存请求 MISS 5%&apos;)
+}
+vars.put(&apos;EXPECTED_CACHE_RESULT&apos;, expected)
+def json = &apos;{&quot;model&quot;:&quot;mock-model&quot;,&quot;messages&quot;:[{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;&apos; + content + &apos;&quot;}],&quot;temperature&quot;:0,&quot;stream&quot;:false}&apos;
+sampler.getArguments().getArgument(0).setValue(json)
+              </stringProp>
+              <stringProp name="scriptLanguage">groovy</stringProp>
+            </JSR223PreProcessor>
+            <hashTree/>
+            <JSR223Assertion guiclass="TestBeanGUI" testclass="JSR223Assertion" testname="断言：混合缓存类型" enabled="true">
+              <stringProp name="cacheKey">true</stringProp>
+              <stringProp name="filename"></stringProp>
+              <stringProp name="parameters"></stringProp>
+              <stringProp name="script">
+if (prev.getResponseCode() != &apos;200&apos;) { AssertionResult.setFailure(true); AssertionResult.setFailureMessage(&apos;Mixed cache expected HTTP 200, actual &apos; + prev.getResponseCode()); return }
+boolean hit = prev.getResponseHeaders().toUpperCase().contains(&apos;X-CACHE: HIT&apos;)
+if (vars.get(&apos;EXPECTED_CACHE_RESULT&apos;) == &apos;HIT&apos; &amp;&amp; !hit) { AssertionResult.setFailure(true); AssertionResult.setFailureMessage(&apos;Expected cache HIT but request missed&apos;) }
+if (vars.get(&apos;EXPECTED_CACHE_RESULT&apos;) == &apos;MISS&apos; &amp;&amp; hit) { AssertionResult.setFailure(true); AssertionResult.setFailureMessage(&apos;Expected unique cache MISS but request hit&apos;) }
+              </stringProp>
+              <stringProp name="scriptLanguage">groovy</stringProp>
+            </JSR223Assertion>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+      </hashTree>
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="40 - 缓存穿透与布隆过滤器负向压测" enabled="true">
+        <stringProp name="ThreadGroup.num_threads">${__groovy([&apos;cache-penetration&apos;\,&apos;all&apos;].contains(props.get(&apos;scenario&apos;\,&apos;functional&apos;)) ? props.get(&apos;cache_threads&apos;\,&apos;200&apos;) : &apos;1&apos;)}</stringProp>
+        <stringProp name="ThreadGroup.ramp_time">${__groovy([&apos;cache-penetration&apos;\,&apos;all&apos;].contains(props.get(&apos;scenario&apos;\,&apos;functional&apos;)) ? props.get(&apos;cache_ramp&apos;\,&apos;5&apos;) : &apos;0&apos;)}</stringProp>
+        <stringProp name="ThreadGroup.duration">${__P(cache_duration,300)}</stringProp>
+        <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
+        <boolProp name="ThreadGroup.scheduler">true</boolProp>
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController" testname="循环控制器">
+          <stringProp name="LoopController.loops">${__groovy([&apos;cache-penetration&apos;\,&apos;all&apos;].contains(props.get(&apos;scenario&apos;\,&apos;functional&apos;)) ? -1 : 1)}</stringProp>
+          <boolProp name="LoopController.continue_forever">false</boolProp>
+        </elementProp>
+      </ThreadGroup>
+      <hashTree>
+        <IfController guiclass="IfControllerPanel" testclass="IfController" testname="当 scenario=cache-penetration|all 时运行" enabled="true">
+          <stringProp name="IfController.condition">${__groovy([&apos;cache-penetration&apos;\,&apos;all&apos;].contains(props.get(&apos;scenario&apos;\,&apos;functional&apos;)))}</stringProp>
+          <boolProp name="IfController.evaluateAll">false</boolProp>
+          <boolProp name="IfController.useExpression">true</boolProp>
+        </IfController>
+        <hashTree>
+          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="缓存穿透压测请求头" enabled="true">
+            <collectionProp name="HeaderManager.headers">
+              <elementProp name="" elementType="Header">
+                <stringProp name="Header.name">X-Api-Key</stringProp>
+                <stringProp name="Header.value">${API_KEY}</stringProp>
+              </elementProp>
+              <elementProp name="" elementType="Header">
+                <stringProp name="Header.name">X-Provider</stringProp>
+                <stringProp name="Header.value">${PRIMARY_PROVIDER}</stringProp>
+              </elementProp>
+            </collectionProp>
+          </HeaderManager>
+          <hashTree/>
+          <PreciseThroughputTimer guiclass="TestBeanGUI" testclass="PreciseThroughputTimer" testname="缓存穿透目标 QPS" enabled="true">
+            <stringProp name="allowedThroughputSurplus">1.0</stringProp>
+            <intProp name="batchSize">1</intProp>
+            <intProp name="batchThreadDelay">0</intProp>
+            <stringProp name="duration">${__P(cache_duration,300)}</stringProp>
+            <stringProp name="exactLimit">0</stringProp>
+            <longProp name="randomSeed">0</longProp>
+            <stringProp name="throughput">${__P(cache_qps,300)}</stringProp>
+            <intProp name="throughputPeriod">1</intProp>
+          </PreciseThroughputTimer>
+          <hashTree/>
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="缓存穿透未命中请求" enabled="true">
+            <stringProp name="HTTPSampler.domain">${GW_HOST}</stringProp>
+            <stringProp name="HTTPSampler.port">${GW_PORT}</stringProp>
+            <stringProp name="HTTPSampler.protocol">http</stringProp>
+            <stringProp name="HTTPSampler.path">/v1/chat/completions</stringProp>
+            <stringProp name="HTTPSampler.method">POST</stringProp>
+            <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+            <boolProp name="HTTPSampler.postBodyRaw">true</boolProp>
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments">
+              <collectionProp name="Arguments.arguments">
+                <elementProp name="" elementType="HTTPArgument">
+                  <boolProp name="HTTPArgument.always_encode">false</boolProp>
+                  <stringProp name="Argument.value">{&quot;model&quot;:&quot;mock-model&quot;,&quot;messages&quot;:[{&quot;role&quot;:&quot;user&quot;,&quot;content&quot;:&quot;pressure-penetration-${CACHE_NAMESPACE}-${__counter(TRUE,penetrationIndex)}&quot;}],&quot;temperature&quot;:0,&quot;stream&quot;:false}</stringProp>
+                  <stringProp name="Argument.metadata">=</stringProp>
+                </elementProp>
+              </collectionProp>
+            </elementProp>
+          </HTTPSamplerProxy>
+          <hashTree>
+            <JSR223Assertion guiclass="TestBeanGUI" testclass="JSR223Assertion" testname="断言：唯一请求未命中缓存" enabled="true">
+              <stringProp name="cacheKey">true</stringProp>
+              <stringProp name="filename"></stringProp>
+              <stringProp name="parameters"></stringProp>
+              <stringProp name="script">
+if (prev.getResponseCode() != &apos;200&apos;) { AssertionResult.setFailure(true); AssertionResult.setFailureMessage(&apos;Penetration request expected HTTP 200, actual &apos; + prev.getResponseCode()); return }
+if (prev.getResponseHeaders().toUpperCase().contains(&apos;X-CACHE: HIT&apos;)) { AssertionResult.setFailure(true); AssertionResult.setFailureMessage(&apos;Unique penetration key unexpectedly hit cache&apos;) }
+              </stringProp>
+              <stringProp name="scriptLanguage">groovy</stringProp>
+            </JSR223Assertion>
+            <hashTree/>
+          </hashTree>
+        </hashTree>
+      </hashTree>
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="测试样例">
+        <intProp name="ThreadGroup.num_threads">1</intProp>
+        <intProp name="ThreadGroup.ramp_time">1</intProp>
+        <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
+        <stringProp name="ThreadGroup.on_sample_error">continue</stringProp>
+        <elementProp name="ThreadGroup.main_controller" elementType="LoopController" guiclass="LoopControlPanel" testclass="LoopController" testname="循环控制器">
+          <stringProp name="LoopController.loops">1</stringProp>
+          <boolProp name="LoopController.continue_forever">false</boolProp>
+        </elementProp>
+      </ThreadGroup>
+      <hashTree>
+        <ResultCollector guiclass="StatVisualizer" testclass="ResultCollector" testname="聚合报告">
+          <boolProp name="ResultCollector.error_logging">false</boolProp>
+          <objProp>
+            <name>saveConfig</name>
+            <value class="SampleSaveConfiguration">
+              <time>true</time>
+              <latency>true</latency>
+              <timestamp>true</timestamp>
+              <success>true</success>
+              <label>true</label>
+              <code>true</code>
+              <message>true</message>
+              <threadName>true</threadName>
+              <dataType>true</dataType>
+              <encoding>false</encoding>
+              <assertions>true</assertions>
+              <subresults>true</subresults>
+              <responseData>false</responseData>
+              <samplerData>false</samplerData>
+              <xml>false</xml>
+              <fieldNames>true</fieldNames>
+              <responseHeaders>false</responseHeaders>
+              <requestHeaders>false</requestHeaders>
+              <responseDataOnError>false</responseDataOnError>
+              <saveAssertionResultsFailureMessage>true</saveAssertionResultsFailureMessage>
+              <assertionsResultsToSave>0</assertionsResultsToSave>
+              <bytes>true</bytes>
+              <sentBytes>true</sentBytes>
+              <url>true</url>
+              <threadCounts>true</threadCounts>
+              <idleTime>true</idleTime>
+              <connectTime>true</connectTime>
+            </value>
+          </objProp>
+          <stringProp name="filename"></stringProp>
+        </ResultCollector>
+        <hashTree/>
+        <ResultCollector guiclass="SummaryReport" testclass="ResultCollector" testname="汇总报告">
+          <boolProp name="ResultCollector.error_logging">false</boolProp>
+          <objProp>
+            <name>saveConfig</name>
+            <value class="SampleSaveConfiguration">
+              <time>true</time>
+              <latency>true</latency>
+              <timestamp>true</timestamp>
+              <success>true</success>
+              <label>true</label>
+              <code>true</code>
+              <message>true</message>
+              <threadName>true</threadName>
+              <dataType>true</dataType>
+              <encoding>false</encoding>
+              <assertions>true</assertions>
+              <subresults>true</subresults>
+              <responseData>false</responseData>
+              <samplerData>false</samplerData>
+              <xml>false</xml>
+              <fieldNames>true</fieldNames>
+              <responseHeaders>false</responseHeaders>
+              <requestHeaders>false</requestHeaders>
+              <responseDataOnError>false</responseDataOnError>
+              <saveAssertionResultsFailureMessage>true</saveAssertionResultsFailureMessage>
+              <assertionsResultsToSave>0</assertionsResultsToSave>
+              <bytes>true</bytes>
+              <sentBytes>true</sentBytes>
+              <url>true</url>
+              <threadCounts>true</threadCounts>
+              <idleTime>true</idleTime>
+              <connectTime>true</connectTime>
+            </value>
+          </objProp>
+          <stringProp name="filename"></stringProp>
+        </ResultCollector>
+        <hashTree/>
+        <ResultCollector guiclass="ViewResultsFullVisualizer" testclass="ResultCollector" testname="查看结果树">
+          <boolProp name="ResultCollector.error_logging">false</boolProp>
+          <objProp>
+            <name>saveConfig</name>
+            <value class="SampleSaveConfiguration">
+              <time>true</time>
+              <latency>true</latency>
+              <timestamp>true</timestamp>
+              <success>true</success>
+              <label>true</label>
+              <code>true</code>
+              <message>true</message>
+              <threadName>true</threadName>
+              <dataType>true</dataType>
+              <encoding>false</encoding>
+              <assertions>true</assertions>
+              <subresults>true</subresults>
+              <responseData>false</responseData>
+              <samplerData>false</samplerData>
+              <xml>false</xml>
+              <fieldNames>true</fieldNames>
+              <responseHeaders>false</responseHeaders>
+              <requestHeaders>false</requestHeaders>
+              <responseDataOnError>false</responseDataOnError>
+              <saveAssertionResultsFailureMessage>true</saveAssertionResultsFailureMessage>
+              <assertionsResultsToSave>0</assertionsResultsToSave>
+              <bytes>true</bytes>
+              <sentBytes>true</sentBytes>
+              <url>true</url>
+              <threadCounts>true</threadCounts>
+              <idleTime>true</idleTime>
+              <connectTime>true</connectTime>
+            </value>
+          </objProp>
+          <stringProp name="filename"></stringProp>
+        </ResultCollector>
+        <hashTree/>
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="网关健康检查测试">
+          <stringProp name="HTTPSampler.domain">${GW_HOST}</stringProp>
+          <stringProp name="HTTPSampler.port">${GW_PORT}</stringProp>
+          <stringProp name="HTTPSampler.protocol">HTTP</stringProp>
+          <stringProp name="HTTPSampler.path">/actuator/health</stringProp>
+          <boolProp name="HTTPSampler.follow_redirects">true</boolProp>
+          <stringProp name="HTTPSampler.method">GET</stringProp>
+          <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
+          <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="用户定义的变量">
+            <collectionProp name="Arguments.arguments"/>
+          </elementProp>
+        </HTTPSamplerProxy>
+        <hashTree/>
+      </hashTree>
+    </hashTree>
+  </hashTree>
+</jmeterTestPlan>

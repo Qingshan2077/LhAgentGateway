@@ -35,3 +35,4 @@ docs/
 /load-test/README.md
 
 /.run/AdminApplication.run.xml
+*.csv
