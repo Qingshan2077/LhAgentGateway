@@ -29,6 +29,7 @@ public class BloomFilterHelper {
     private static final Logger log = LoggerFactory.getLogger(BloomFilterHelper.class);
     private static final String BLOOM_KEY = "cache:llm:bloom:v2";
     private static final long BIT_SIZE = 10_000_000L;
+    //将每一个 key 映射到 7 个 bit 位置
     private static final int HASH_FUNCTIONS = 7;
     private static final RedisScript<Long> CHECK_SCRIPT = new DefaultRedisScript<>("""
             for i = 1, #ARGV do

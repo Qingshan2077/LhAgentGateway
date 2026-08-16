@@ -79,6 +79,7 @@
           </elementProp>
         </collectionProp>
       </elementProp>
+      <boolProp name="TestPlan.functional_mode">false</boolProp>
     </TestPlan>
     <hashTree>
       <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="全局 Content-Type 请求头">
@@ -90,7 +91,7 @@
         </collectionProp>
       </HeaderManager>
       <hashTree/>
-      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="01 - 全部 API 功能测试">
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="01 - 全部 API 功能测试" enabled="true">
         <intProp name="ThreadGroup.num_threads">1</intProp>
         <intProp name="ThreadGroup.ramp_time">1</intProp>
         <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
@@ -101,13 +102,13 @@
         </elementProp>
       </ThreadGroup>
       <hashTree>
-        <IfController guiclass="IfControllerPanel" testclass="IfController" testname="当 scenario=functional|all 时运行">
+        <IfController guiclass="IfControllerPanel" testclass="IfController" testname="当 scenario=functional|all 时运行" enabled="true">
           <stringProp name="IfController.condition">${__groovy([&apos;functional&apos;\,&apos;all&apos;].contains(props.get(&apos;scenario&apos;\,&apos;functional&apos;)))}</stringProp>
           <boolProp name="IfController.evaluateAll">false</boolProp>
           <boolProp name="IfController.useExpression">true</boolProp>
         </IfController>
         <hashTree>
-          <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler" testname="初始化功能测试变量">
+          <JSR223Sampler guiclass="TestBeanGUI" testclass="JSR223Sampler" testname="初始化功能测试变量" enabled="true">
             <stringProp name="cacheKey">true</stringProp>
             <stringProp name="filename"></stringProp>
             <stringProp name="parameters"></stringProp>
@@ -127,7 +128,7 @@ SampleResult.setSuccessful(true)
             <stringProp name="scriptLanguage">groovy</stringProp>
           </JSR223Sampler>
           <hashTree/>
-          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="网关：健康检查">
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="网关：健康检查" enabled="true">
             <stringProp name="HTTPSampler.domain">${GW_HOST}</stringProp>
             <stringProp name="HTTPSampler.port">${GW_PORT}</stringProp>
             <stringProp name="HTTPSampler.protocol">http</stringProp>
@@ -135,7 +136,7 @@ SampleResult.setSuccessful(true)
             <stringProp name="HTTPSampler.method">GET</stringProp>
             <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
             <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
-            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="用户定义的变量">
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
               <collectionProp name="Arguments.arguments"/>
             </elementProp>
           </HTTPSamplerProxy>
@@ -217,7 +218,7 @@ SampleResult.setSuccessful(true)
             </elementProp>
           </HTTPSamplerProxy>
           <hashTree/>
-          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="管理端：查询供应商列表（GET）">
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="管理端：查询供应商列表（GET）" enabled="true">
             <stringProp name="HTTPSampler.domain">${ADMIN_HOST}</stringProp>
             <stringProp name="HTTPSampler.port">${ADMIN_PORT}</stringProp>
             <stringProp name="HTTPSampler.protocol">http</stringProp>
@@ -225,7 +226,7 @@ SampleResult.setSuccessful(true)
             <stringProp name="HTTPSampler.method">GET</stringProp>
             <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
             <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
-            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="用户定义的变量">
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
               <collectionProp name="Arguments.arguments"/>
             </elementProp>
           </HTTPSamplerProxy>
@@ -300,7 +301,7 @@ SampleResult.setSuccessful(true)
             <stringProp name="scriptLanguage">groovy</stringProp>
           </JSR223Sampler>
           <hashTree/>
-          <GenericController guiclass="LogicControllerGui" testclass="GenericController" testname="网关已授权 API 测试"/>
+          <GenericController guiclass="LogicControllerGui" testclass="GenericController" testname="网关已授权 API 测试" enabled="true"/>
           <hashTree>
             <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="网关授权请求头" enabled="true">
               <collectionProp name="HeaderManager.headers">
@@ -510,7 +511,7 @@ SampleResult.setSuccessful(true)
             </HTTPSamplerProxy>
             <hashTree/>
           </hashTree>
-          <GenericController guiclass="LogicControllerGui" testclass="GenericController" testname="缓存租户隔离测试"/>
+          <GenericController guiclass="LogicControllerGui" testclass="GenericController" testname="缓存租户隔离测试" enabled="true"/>
           <hashTree>
             <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="租户 B 请求头" enabled="true">
               <collectionProp name="HeaderManager.headers">
@@ -545,7 +546,7 @@ SampleResult.setSuccessful(true)
             </HTTPSamplerProxy>
             <hashTree/>
           </hashTree>
-          <GenericController guiclass="LogicControllerGui" testclass="GenericController" testname="缓存供应商隔离测试"/>
+          <GenericController guiclass="LogicControllerGui" testclass="GenericController" testname="缓存供应商隔离测试" enabled="true"/>
           <hashTree>
             <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="临时供应商请求头" enabled="true">
               <collectionProp name="HeaderManager.headers">
@@ -580,7 +581,7 @@ SampleResult.setSuccessful(true)
             </HTTPSamplerProxy>
             <hashTree/>
           </hashTree>
-          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="管理端：禁用供应商（POST）">
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="管理端：禁用供应商（POST）" enabled="true">
             <stringProp name="HTTPSampler.domain">${ADMIN_HOST}</stringProp>
             <stringProp name="HTTPSampler.port">${ADMIN_PORT}</stringProp>
             <stringProp name="HTTPSampler.protocol">http</stringProp>
@@ -588,7 +589,7 @@ SampleResult.setSuccessful(true)
             <stringProp name="HTTPSampler.method">POST</stringProp>
             <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
             <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
-            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="用户定义的变量">
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
               <collectionProp name="Arguments.arguments"/>
             </elementProp>
           </HTTPSamplerProxy>
@@ -601,7 +602,7 @@ SampleResult.setSuccessful(true)
             <stringProp name="scriptLanguage">groovy</stringProp>
           </JSR223Sampler>
           <hashTree/>
-          <GenericController guiclass="LogicControllerGui" testclass="GenericController" testname="已禁用供应商验证"/>
+          <GenericController guiclass="LogicControllerGui" testclass="GenericController" testname="已禁用供应商验证" enabled="true"/>
           <hashTree>
             <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="已禁用供应商请求头" enabled="true">
               <collectionProp name="HeaderManager.headers">
@@ -657,7 +658,7 @@ SampleResult.setSuccessful(true)
             <stringProp name="scriptLanguage">groovy</stringProp>
           </JSR223Sampler>
           <hashTree/>
-          <GenericController guiclass="LogicControllerGui" testclass="GenericController" testname="已启用供应商验证"/>
+          <GenericController guiclass="LogicControllerGui" testclass="GenericController" testname="已启用供应商验证" enabled="true"/>
           <hashTree>
             <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="重新启用的供应商请求头" enabled="true">
               <collectionProp name="HeaderManager.headers">
@@ -792,7 +793,7 @@ SampleResult.setSuccessful(true)
             </elementProp>
           </HTTPSamplerProxy>
           <hashTree/>
-          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="管理端：删除供应商（DELETE）">
+          <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="管理端：删除供应商（DELETE）" enabled="true">
             <stringProp name="HTTPSampler.domain">${ADMIN_HOST}</stringProp>
             <stringProp name="HTTPSampler.port">${ADMIN_PORT}</stringProp>
             <stringProp name="HTTPSampler.protocol">http</stringProp>
@@ -800,7 +801,7 @@ SampleResult.setSuccessful(true)
             <stringProp name="HTTPSampler.method">DELETE</stringProp>
             <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
             <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
-            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="用户定义的变量">
+            <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
               <collectionProp name="Arguments.arguments"/>
             </elementProp>
           </HTTPSamplerProxy>
@@ -1041,7 +1042,7 @@ switch (label) {
           <hashTree/>
         </hashTree>
       </hashTree>
-      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="11 - L1 Caffeine 缓存压测" enabled="true">
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="11 - L1 Caffeine 缓存压测">
         <stringProp name="ThreadGroup.num_threads">${__groovy([&apos;cache-l1&apos;\,&apos;all&apos;].contains(props.get(&apos;scenario&apos;\,&apos;functional&apos;)) ? props.get(&apos;cache_threads&apos;\,&apos;200&apos;) : &apos;1&apos;)}</stringProp>
         <stringProp name="ThreadGroup.ramp_time">${__groovy([&apos;cache-l1&apos;\,&apos;all&apos;].contains(props.get(&apos;scenario&apos;\,&apos;functional&apos;)) ? props.get(&apos;cache_ramp&apos;\,&apos;5&apos;) : &apos;0&apos;)}</stringProp>
         <stringProp name="ThreadGroup.duration">${__P(l1_duration,50)}</stringProp>
@@ -1060,7 +1061,7 @@ switch (label) {
           <boolProp name="IfController.useExpression">true</boolProp>
         </IfController>
         <hashTree>
-          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="L1 压测请求头" enabled="true">
+          <HeaderManager guiclass="HeaderPanel" testclass="HeaderManager" testname="L1 压测请求头">
             <collectionProp name="HeaderManager.headers">
               <elementProp name="" elementType="Header">
                 <stringProp name="Header.name">X-Api-Key</stringProp>
@@ -1073,7 +1074,7 @@ switch (label) {
             </collectionProp>
           </HeaderManager>
           <hashTree/>
-          <PreciseThroughputTimer guiclass="TestBeanGUI" testclass="PreciseThroughputTimer" testname="L1 目标 QPS" enabled="true">
+          <PreciseThroughputTimer guiclass="TestBeanGUI" testclass="PreciseThroughputTimer" testname="L1 目标 QPS">
             <stringProp name="allowedThroughputSurplus">1.0</stringProp>
             <intProp name="batchSize">1</intProp>
             <intProp name="batchThreadDelay">0</intProp>
@@ -1103,7 +1104,7 @@ switch (label) {
             </elementProp>
           </HTTPSamplerProxy>
           <hashTree>
-            <JSR223Assertion guiclass="TestBeanGUI" testclass="JSR223Assertion" testname="断言：L1 缓存命中" enabled="true">
+            <JSR223Assertion guiclass="TestBeanGUI" testclass="JSR223Assertion" testname="断言：L1 缓存命中">
               <stringProp name="cacheKey">true</stringProp>
               <stringProp name="filename"></stringProp>
               <stringProp name="parameters"></stringProp>
@@ -1117,7 +1118,7 @@ if (!prev.getResponseHeaders().toUpperCase().contains(&apos;X-CACHE: HIT&apos;))
           </hashTree>
         </hashTree>
       </hashTree>
-      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="20 - L2 Redis 缓存准备" enabled="true">
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="20 - L2 Redis 缓存准备">
         <intProp name="ThreadGroup.num_threads">1</intProp>
         <intProp name="ThreadGroup.ramp_time">1</intProp>
         <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
@@ -1636,7 +1637,7 @@ if (prev.getResponseHeaders().toUpperCase().contains(&apos;X-CACHE: HIT&apos;)) 
           </hashTree>
         </hashTree>
       </hashTree>
-      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="测试样例">
+      <ThreadGroup guiclass="ThreadGroupGui" testclass="ThreadGroup" testname="测试样例" enabled="true">
         <intProp name="ThreadGroup.num_threads">1</intProp>
         <intProp name="ThreadGroup.ramp_time">1</intProp>
         <boolProp name="ThreadGroup.same_user_on_next_iteration">true</boolProp>
@@ -1647,7 +1648,7 @@ if (prev.getResponseHeaders().toUpperCase().contains(&apos;X-CACHE: HIT&apos;)) 
         </elementProp>
       </ThreadGroup>
       <hashTree>
-        <ResultCollector guiclass="StatVisualizer" testclass="ResultCollector" testname="聚合报告">
+        <ResultCollector guiclass="StatVisualizer" testclass="ResultCollector" testname="聚合报告" enabled="true">
           <boolProp name="ResultCollector.error_logging">false</boolProp>
           <objProp>
             <name>saveConfig</name>
@@ -1684,7 +1685,7 @@ if (prev.getResponseHeaders().toUpperCase().contains(&apos;X-CACHE: HIT&apos;)) 
           <stringProp name="filename"></stringProp>
         </ResultCollector>
         <hashTree/>
-        <ResultCollector guiclass="SummaryReport" testclass="ResultCollector" testname="汇总报告">
+        <ResultCollector guiclass="SummaryReport" testclass="ResultCollector" testname="汇总报告" enabled="true">
           <boolProp name="ResultCollector.error_logging">false</boolProp>
           <objProp>
             <name>saveConfig</name>
@@ -1721,7 +1722,7 @@ if (prev.getResponseHeaders().toUpperCase().contains(&apos;X-CACHE: HIT&apos;)) 
           <stringProp name="filename"></stringProp>
         </ResultCollector>
         <hashTree/>
-        <ResultCollector guiclass="ViewResultsFullVisualizer" testclass="ResultCollector" testname="查看结果树">
+        <ResultCollector guiclass="ViewResultsFullVisualizer" testclass="ResultCollector" testname="查看结果树" enabled="true">
           <boolProp name="ResultCollector.error_logging">false</boolProp>
           <objProp>
             <name>saveConfig</name>
@@ -1758,7 +1759,7 @@ if (prev.getResponseHeaders().toUpperCase().contains(&apos;X-CACHE: HIT&apos;)) 
           <stringProp name="filename"></stringProp>
         </ResultCollector>
         <hashTree/>
-        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="网关健康检查测试">
+        <HTTPSamplerProxy guiclass="HttpTestSampleGui" testclass="HTTPSamplerProxy" testname="网关健康检查测试" enabled="true">
           <stringProp name="HTTPSampler.domain">${GW_HOST}</stringProp>
           <stringProp name="HTTPSampler.port">${GW_PORT}</stringProp>
           <stringProp name="HTTPSampler.protocol">HTTP</stringProp>
@@ -1767,7 +1768,7 @@ if (prev.getResponseHeaders().toUpperCase().contains(&apos;X-CACHE: HIT&apos;)) 
           <stringProp name="HTTPSampler.method">GET</stringProp>
           <boolProp name="HTTPSampler.use_keepalive">true</boolProp>
           <boolProp name="HTTPSampler.postBodyRaw">false</boolProp>
-          <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="用户定义的变量">
+          <elementProp name="HTTPsampler.Arguments" elementType="Arguments" guiclass="HTTPArgumentsPanel" testclass="Arguments" testname="User Defined Variables">
             <collectionProp name="Arguments.arguments"/>
           </elementProp>
         </HTTPSamplerProxy>

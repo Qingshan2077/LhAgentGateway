@@ -49,6 +49,12 @@ import java.util.List;
 public class RouterFilter implements GlobalFilter, Ordered {
 
     public static final String PROVIDER_ATTR = "selectedProvider";
+    /**
+     * RouterFilter runs before Spring's RouteToRequestUrlFilter so cache and rate-limit filters can
+     * observe the selected provider. Spring later rebuilds GATEWAY_REQUEST_URL_ATTR from the static
+     * route, therefore ProviderRequestUrlFilter reapplies this dynamic target after that step.
+     */
+    public static final String PROVIDER_TARGET_URL_ATTR = "selectedProviderTargetUrl";
 
     private final LlmProperties llmProperties;
     private final RouterFactory routerFactory;
@@ -153,6 +159,7 @@ public class RouterFilter implements GlobalFilter, Ordered {
         String targetUrl = target.getBaseUrl() + path
                 + (rawQuery == null || rawQuery.isBlank() ? "" : "?" + rawQuery);
         URI targetUri = URI.create(targetUrl);
+        exchange.getAttributes().put(PROVIDER_TARGET_URL_ATTR, targetUri);
         exchange.getAttributes().put(ServerWebExchangeUtils.GATEWAY_REQUEST_URL_ATTR, targetUri);
         log.debug("Route selected: provider={}, target={}", provider, targetUri);
 
